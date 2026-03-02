@@ -30,6 +30,12 @@ class AudioRenderer:
         samples = np.zeros(int(total_seconds * self.sample_rate), dtype=np.float32)
 
         for note in score.notes:
+            if note.is_rest:
+                continue
+            pitches = note.resolved_pitches()
+            if not pitches:
+                continue
+
             start_beats = (note.bar - 1) * beats_per_bar + (note.beat - 1.0)
             duration_beats = parse_duration_to_beats(note.dur)
 
@@ -44,9 +50,12 @@ class AudioRenderer:
                 continue
 
             t = np.arange(length, dtype=np.float32) / self.sample_rate
-            freq = pitch_to_freq(note.pitch)
-            phase = 2.0 * math.pi * freq * t
-            signal = np.sin(phase)
+            signal = np.zeros(length, dtype=np.float32)
+            for pitch in pitches:
+                freq = pitch_to_freq(pitch)
+                phase = 2.0 * math.pi * freq * t
+                signal += np.sin(phase)
+            signal /= max(1, len(pitches))
 
             velocity_amp = max(0.05, min(1.0, note.vel / 127.0))
             signal *= velocity_amp
