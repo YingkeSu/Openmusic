@@ -9,6 +9,7 @@ from http.server import ThreadingHTTPServer
 from pathlib import Path
 
 from services.orchestrator import Orchestrator
+from services.utils import dump_json
 from services.server import PianoRequestHandler, _create_server_with_fallback
 
 
@@ -42,6 +43,10 @@ def test_web_root_and_web_path_available(tmp_path: Path) -> None:
             "reference": "test",
             "compose_mode": "rule",
         }
+    )
+    dump_json(
+        tmp_path / "projects" / "web_test_project" / "v001" / "llm_output.json",
+        {"project_id": "web_test_project", "version": "v001", "llm": {"raw_content": "{}"}},
     )
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
@@ -97,6 +102,14 @@ def test_web_root_and_web_path_available(tmp_path: Path) -> None:
         payload_score = json.loads(body_score.decode("utf-8"))
         assert payload_score["code"] == 0
         assert payload_score["data"]["score"]["meta"]["title"] == "web test"
+
+        status_llm, _, body_llm = _http_get(
+            f"http://{host}:{port}/api/v1/projects/web_test_project/llm/v001"
+        )
+        assert status_llm == 200
+        payload_llm = json.loads(body_llm.decode("utf-8"))
+        assert payload_llm["code"] == 0
+        assert payload_llm["data"]["llm_output"]["project_id"] == "web_test_project"
     finally:
         server.shutdown()
         server.server_close()
