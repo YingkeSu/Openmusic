@@ -11,7 +11,7 @@ from pathlib import Path
 import numpy as np
 
 from .models import Score
-from .utils import parse_duration_to_beats, pitch_to_midi, time_signature_parts
+from .utils import parse_duration_to_beats, parse_pitch, pitch_to_midi, time_signature_parts
 
 
 @dataclass
@@ -26,6 +26,10 @@ class VideoRenderer:
     fps: int = 12
     width: int = 960
     height: int = 540
+    left_margin: int = 70
+    right_margin: int = 70
+    staff_top: int = 180
+    staff_line_gap: int = 14
 
     def render(
         self,
@@ -82,30 +86,33 @@ class VideoRenderer:
         unplayed_rgb = self._hex_to_rgb(unplayed_color)
 
         notes = sorted(score.notes, key=lambda n: (n.bar, n.beat, n.note_id))
-        note_count = max(1, len(notes))
-        x_step = max(1, (self.width - 120) // note_count)
+        usable_width = max(1, self.width - self.left_margin - self.right_margin)
 
         note_events = []
-        for idx, note in enumerate(notes):
+        for note in notes:
             start_beats = (note.bar - 1) * beats_per_bar + (note.beat - 1.0)
             duration_beats = parse_duration_to_beats(note.dur)
             start_sec = start_beats * beat_sec
             end_sec = (start_beats + duration_beats) * beat_sec
             midi = pitch_to_midi(note.pitch)
-            y = self._pitch_to_y(midi)
-            x = 60 + idx * x_step
-            note_events.append((x, y, start_sec, end_sec))
+            x = self.left_margin + int(
+                ((start_beats + duration_beats * 0.5) / (score.meta.bars * beats_per_bar))
+                * usable_width
+            )
+            y, step_offset = self._pitch_to_staff_y(note.pitch)
+            note_events.append((x, y, step_offset, start_sec, end_sec, duration_beats, midi))
 
         with tempfile.TemporaryDirectory(prefix="piano_frames_") as tmp:
             tmp_dir = Path(tmp)
             for frame_idx in range(total_frames):
                 current_t = frame_idx / self.fps
                 canvas = np.full((self.height, self.width, 3), 245, dtype=np.uint8)
-                self._draw_staff(canvas)
+                self._draw_staff(canvas, score.meta.bars, beats_per_bar, usable_width)
+                self._draw_playhead(canvas, current_t, total_seconds, usable_width)
 
-                for x, y, _, end_sec in note_events:
+                for x, y, step_offset, _, end_sec, duration_beats, _ in note_events:
                     color = played_rgb if current_t >= end_sec else unplayed_rgb
-                    self._draw_rect(canvas, x, y, 18, 12, color)
+                    self._draw_note(canvas, x, y, step_offset, duration_beats, color)
 
                 frame_path = tmp_dir / f"frame_{frame_idx:05d}.ppm"
                 self._write_ppm(frame_path, canvas)
@@ -138,32 +145,178 @@ class VideoRenderer:
 
         return VideoRenderResult(mp4_path=mp4_path, sync_delta_ms=0, mode="ffmpeg")
 
-    def _draw_staff(self, canvas: np.ndarray) -> None:
-        y_start = self.height // 3
-        spacing = 14
+    def _draw_staff(
+        self,
+        canvas: np.ndarray,
+        bars: int,
+        beats_per_bar: int,
+        usable_width: int,
+    ) -> None:
         for idx in range(5):
-            y = y_start + idx * spacing
-            canvas[y : y + 2, 40 : self.width - 40] = (180, 180, 180)
+            y = self.staff_top + idx * self.staff_line_gap
+            self._draw_hline(
+                canvas,
+                y,
+                self.left_margin - 8,
+                self.width - self.right_margin + 8,
+                (168, 168, 168),
+                thickness=2,
+            )
 
-    def _draw_rect(
+        total_beats = bars * beats_per_bar
+        for bar in range(0, bars + 1):
+            x = self.left_margin + int((bar * beats_per_bar / total_beats) * usable_width)
+            thickness = 2 if bar in (0, bars) else 1
+            self._draw_vline(
+                canvas,
+                x,
+                self.staff_top - 2,
+                self.staff_top + self.staff_line_gap * 4 + 2,
+                (176, 176, 176),
+                thickness=thickness,
+            )
+
+    def _draw_playhead(
+        self,
+        canvas: np.ndarray,
+        current_t: float,
+        total_seconds: float,
+        usable_width: int,
+    ) -> None:
+        if total_seconds <= 0:
+            return
+        ratio = max(0.0, min(1.0, current_t / total_seconds))
+        x = self.left_margin + int(ratio * usable_width)
+        self._draw_vline(
+            canvas,
+            x,
+            self.staff_top - 16,
+            self.staff_top + self.staff_line_gap * 4 + 48,
+            (64, 64, 64),
+            thickness=2,
+        )
+
+    def _draw_note(
         self,
         canvas: np.ndarray,
         x: int,
         y: int,
-        width: int,
-        height: int,
+        step_offset: int,
+        duration_beats: float,
         color: tuple[int, int, int],
     ) -> None:
-        x0 = max(0, x)
-        x1 = min(canvas.shape[1], x + width)
-        y0 = max(0, y)
-        y1 = min(canvas.shape[0], y + height)
-        canvas[y0:y1, x0:x1] = color
+        rx = 8
+        ry = 6
+        self._draw_filled_ellipse(canvas, x, y, rx, ry, color)
 
-    def _pitch_to_y(self, midi: int) -> int:
-        clamped = max(48, min(84, midi))
-        ratio = (clamped - 48) / (84 - 48)
-        return int(self.height * 0.72 - ratio * self.height * 0.4)
+        # Draw a stem for notes shorter than whole note.
+        if duration_beats < 4.0:
+            stem_len = 30
+            if step_offset <= 4:
+                # Below/at middle line -> stem up.
+                stem_x = x + rx - 1
+                self._draw_vline(canvas, stem_x, y - stem_len, y, color, thickness=2)
+            else:
+                # Above middle line -> stem down.
+                stem_x = x - rx + 1
+                self._draw_vline(canvas, stem_x, y, y + stem_len, color, thickness=2)
+
+        self._draw_ledger_lines(canvas, x, step_offset, color)
+
+    def _pitch_to_staff_y(self, pitch: str) -> tuple[int, int]:
+        # Treble staff bottom line is E4 -> step offset 0.
+        note_step = self._diatonic_index(pitch)
+        bottom_line_step = self._diatonic_index("E4")
+        step_offset = note_step - bottom_line_step
+        half_gap = self.staff_line_gap / 2.0
+        y_bottom_line = self.staff_top + self.staff_line_gap * 4
+        y = int(round(y_bottom_line - step_offset * half_gap))
+        return y, step_offset
+
+    def _diatonic_index(self, pitch: str) -> int:
+        step, _, octave = parse_pitch(pitch)
+        step_map = {"C": 0, "D": 1, "E": 2, "F": 3, "G": 4, "A": 5, "B": 6}
+        return octave * 7 + step_map[step]
+
+    def _draw_ledger_lines(
+        self,
+        canvas: np.ndarray,
+        x: int,
+        step_offset: int,
+        color: tuple[int, int, int],
+    ) -> None:
+        # Staff covers step offsets [0..8], line positions are even offsets.
+        if step_offset < 0:
+            line_step = -2
+            while line_step >= step_offset:
+                y = self._staff_y_from_step(line_step)
+                self._draw_hline(canvas, y, x - 11, x + 11, color, thickness=2)
+                line_step -= 2
+        elif step_offset > 8:
+            line_step = 10
+            while line_step <= step_offset:
+                y = self._staff_y_from_step(line_step)
+                self._draw_hline(canvas, y, x - 11, x + 11, color, thickness=2)
+                line_step += 2
+
+    def _staff_y_from_step(self, step_offset: int) -> int:
+        half_gap = self.staff_line_gap / 2.0
+        y_bottom_line = self.staff_top + self.staff_line_gap * 4
+        return int(round(y_bottom_line - step_offset * half_gap))
+
+    def _draw_hline(
+        self,
+        canvas: np.ndarray,
+        y: int,
+        x0: int,
+        x1: int,
+        color: tuple[int, int, int],
+        thickness: int = 1,
+    ) -> None:
+        y0 = max(0, y - thickness // 2)
+        y1 = min(canvas.shape[0], y0 + thickness)
+        xs = max(0, min(x0, x1))
+        xe = min(canvas.shape[1], max(x0, x1))
+        if xs >= xe:
+            return
+        canvas[y0:y1, xs:xe] = color
+
+    def _draw_vline(
+        self,
+        canvas: np.ndarray,
+        x: int,
+        y0: int,
+        y1: int,
+        color: tuple[int, int, int],
+        thickness: int = 1,
+    ) -> None:
+        x0 = max(0, x - thickness // 2)
+        x1 = min(canvas.shape[1], x0 + thickness)
+        ys = max(0, min(y0, y1))
+        ye = min(canvas.shape[0], max(y0, y1))
+        if ys >= ye:
+            return
+        canvas[ys:ye, x0:x1] = color
+
+    def _draw_filled_ellipse(
+        self,
+        canvas: np.ndarray,
+        cx: int,
+        cy: int,
+        rx: int,
+        ry: int,
+        color: tuple[int, int, int],
+    ) -> None:
+        x0 = max(0, cx - rx)
+        x1 = min(canvas.shape[1], cx + rx + 1)
+        y0 = max(0, cy - ry)
+        y1 = min(canvas.shape[0], cy + ry + 1)
+        if x0 >= x1 or y0 >= y1:
+            return
+        yy, xx = np.ogrid[y0:y1, x0:x1]
+        mask = (((xx - cx) / max(1, rx)) ** 2 + ((yy - cy) / max(1, ry)) ** 2) <= 1.0
+        region = canvas[y0:y1, x0:x1]
+        region[mask] = color
 
     def _hex_to_rgb(self, color: str) -> tuple[int, int, int]:
         c = color.lstrip("#")
