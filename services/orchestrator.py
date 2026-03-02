@@ -152,13 +152,20 @@ class Orchestrator:
         score: Score | None = None
         compose_error = ""
         compose_engine = "rule"
+        llm_debug: dict[str, Any] = {}
+        llm_output_relpath = ""
         ai_runtime = resolve_llm_runtime(self.root_dir, payload, self.ai_registry)
         ai_requested = compose_mode == "ai" or (compose_mode == "auto" and ai_runtime.enabled)
 
         for attempt in range(1, MAX_LLM_RETRY + 1):
             try:
                 if ai_requested:
-                    score = self.ai_composer.compose(intent, ai_runtime)
+                    compose_with_debug = getattr(self.ai_composer, "compose_with_debug", None)
+                    if callable(compose_with_debug):
+                        score, llm_debug = compose_with_debug(intent, ai_runtime)
+                    else:
+                        score = self.ai_composer.compose(intent, ai_runtime)
+                        llm_debug = {}
                     compose_engine = "ai"
                 else:
                     score = self.composer.compose(intent)
@@ -178,6 +185,18 @@ class Orchestrator:
         try:
             version = self.storage.create_version(project_id, reason="compose", title=intent["title"])
             self.storage.save_score(project_id, version, score.to_dict())
+            if compose_engine == "ai" and llm_debug:
+                llm_output_path = self.storage.llm_output_path(project_id, version)
+                dump_json(
+                    llm_output_path,
+                    {
+                        "project_id": project_id,
+                        "version": version,
+                        "generated_at": utc_now_iso(),
+                        "llm": llm_debug,
+                    },
+                )
+                llm_output_relpath = to_relpath(llm_output_path, self.root_dir)
 
             musicxml_path = self.storage.musicxml_path(project_id, version)
             midi_path = self.storage.midi_path(project_id, version)
@@ -196,6 +215,7 @@ class Orchestrator:
             "compose_engine": compose_engine,
             "ai_provider": ai_runtime.provider_id if compose_engine == "ai" else "",
             "ai_model": ai_runtime.model if compose_engine == "ai" else "",
+            "llm_output": llm_output_relpath,
             "score_json": to_relpath(self.storage.score_path(project_id, version), self.root_dir),
             "musicxml": to_relpath(musicxml_path, self.root_dir),
             "midi": to_relpath(midi_path, self.root_dir),
@@ -490,6 +510,22 @@ class Orchestrator:
             "version": version,
             "score": score,
             "score_path": to_relpath(score_path, self.root_dir),
+        }
+
+    def get_llm_output(self, project_id: str, version: str) -> dict[str, Any]:
+        project_id = project_id.strip()
+        version = version.strip()
+        if not project_id or not version:
+            raise ServiceError(ERROR_INVALID_PARAMS, "project_id and version are required")
+        llm_path = self.storage.llm_output_path(project_id, version)
+        if not llm_path.exists():
+            raise ServiceError(ERROR_INVALID_PARAMS, f"llm output not found: {llm_path}")
+        payload = load_json(llm_path)
+        return {
+            "project_id": project_id,
+            "version": version,
+            "llm_output": payload,
+            "llm_output_path": to_relpath(llm_path, self.root_dir),
         }
 
     def _require_fields(self, payload: dict[str, Any], fields: list[str]) -> None:

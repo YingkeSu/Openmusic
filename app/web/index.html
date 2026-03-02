@@ -327,6 +327,50 @@
         color: var(--muted);
       }
 
+      .modal {
+        position: fixed;
+        inset: 0;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        background: rgba(20, 18, 15, 0.55);
+        z-index: 999;
+        padding: 16px;
+      }
+
+      .modal.show {
+        display: flex;
+      }
+
+      .modal-card {
+        width: min(980px, 96vw);
+        max-height: 88vh;
+        background: #fffdf8;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        box-shadow: 0 16px 40px rgba(20, 18, 15, 0.3);
+        padding: 12px;
+        display: grid;
+        grid-template-rows: auto 1fr;
+        gap: 8px;
+      }
+
+      .modal-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+      }
+
+      .modal-head h3 {
+        margin: 0;
+      }
+
+      .modal pre {
+        min-height: 180px;
+        max-height: calc(88vh - 90px);
+      }
+
       @media (max-width: 1080px) {
         .layout {
           grid-template-columns: 1fr;
@@ -406,6 +450,7 @@
               <button id="renderAudioBtn" class="secondary" disabled>2) 音频</button>
               <button id="renderVideoBtn" class="secondary" disabled>3) 视频</button>
               <button id="exportBtn" class="secondary" disabled>4) 导出</button>
+              <button id="showLlmBtn" class="secondary" disabled>查看 LLM 输出</button>
               <button id="pipelineBtn">一键全流程</button>
             </div>
             <h3>编辑与回滚</h3>
@@ -454,6 +499,19 @@
           </article>
         </div>
       </section>
+
+      <div id="llmModal" class="modal">
+        <div class="modal-card">
+          <div class="modal-head">
+            <h3>LLM 输出窗口</h3>
+            <div class="actions" style="margin:0;">
+              <button id="copyLlmBtn" class="secondary">复制</button>
+              <button id="closeLlmBtn" class="warn">关闭</button>
+            </div>
+          </div>
+          <pre id="llmOutputPre">点击“查看 LLM 输出”后显示。</pre>
+        </div>
+      </div>
     </div>
 
     <script>
@@ -465,6 +523,7 @@
         videoData: null,
         exportData: null,
         score: null,
+        llmOutputData: null,
         selectedNoteId: '',
       };
 
@@ -482,6 +541,11 @@
         videoPlayer: document.getElementById('videoPlayer'),
         scoreCanvas: document.getElementById('scoreCanvas'),
         scoreWrap: document.getElementById('scoreWrap'),
+        showLlmBtn: document.getElementById('showLlmBtn'),
+        llmModal: document.getElementById('llmModal'),
+        llmOutputPre: document.getElementById('llmOutputPre'),
+        closeLlmBtn: document.getElementById('closeLlmBtn'),
+        copyLlmBtn: document.getElementById('copyLlmBtn'),
         editNoteId: document.getElementById('editNoteId'),
         editSemitones: document.getElementById('editSemitones'),
         renderAudioBtn: document.getElementById('renderAudioBtn'),
@@ -530,6 +594,7 @@
         el.exportBtn.disabled = !hasProjectVersion;
         el.editBtn.disabled = !hasProjectVersion;
         el.rollbackBtn.disabled = !hasProjectVersion;
+        el.showLlmBtn.disabled = !hasProjectVersion;
       }
 
       function composePayloadFromForm() {
@@ -824,6 +889,7 @@
           await loadScore(state.projectId, state.version);
         } else {
           state.score = null;
+          state.llmOutputData = null;
           drawScore(null);
           renderNoteTable(null);
           refreshArtifacts();
@@ -865,6 +931,7 @@
         state.audioData = null;
         state.videoData = null;
         state.exportData = null;
+        state.llmOutputData = null;
 
         logTask(`Compose 成功: ${state.projectId}/${state.version} (engine=${data.compose_engine})`);
         setStatus(`编曲成功：${data.compose_engine} | ${data.ai_provider || 'rule'}`, 'ok');
@@ -961,6 +1028,16 @@
         await loadProject(state.projectId, state.version);
       }
 
+      async function runShowLlmOutput() {
+        ensureProjectVersion();
+        const data = await apiGet(`/api/v1/projects/${state.projectId}/llm/${state.version}`);
+        state.llmOutputData = data;
+        el.llmOutputPre.textContent = JSON.stringify(data.llm_output, null, 2);
+        el.llmModal.classList.add('show');
+        logTask(`加载 LLM 输出: ${state.projectId}/${state.version}`);
+        setStatus('LLM 输出已加载', 'ok');
+      }
+
       async function guarded(action) {
         try {
           await action();
@@ -1025,6 +1102,7 @@
       document.getElementById('exportBtn').addEventListener('click', () => guarded(runExport));
       document.getElementById('editBtn').addEventListener('click', () => guarded(runEdit));
       document.getElementById('rollbackBtn').addEventListener('click', () => guarded(runRollback));
+      document.getElementById('showLlmBtn').addEventListener('click', () => guarded(runShowLlmOutput));
 
       document.getElementById('pipelineBtn').addEventListener('click', () =>
         guarded(async () => {
@@ -1051,6 +1129,31 @@
         const v = el.versionSelect.value;
         if (v) {
           el.rollbackVersion.value = v;
+        }
+      });
+
+      el.closeLlmBtn.addEventListener('click', () => {
+        el.llmModal.classList.remove('show');
+      });
+
+      el.copyLlmBtn.addEventListener('click', async () => {
+        try {
+          await navigator.clipboard.writeText(el.llmOutputPre.textContent || '');
+          setStatus('LLM 输出已复制到剪贴板', 'ok');
+        } catch (_) {
+          setStatus('复制失败，请手动复制', 'warn');
+        }
+      });
+
+      el.llmModal.addEventListener('click', (evt) => {
+        if (evt.target === el.llmModal) {
+          el.llmModal.classList.remove('show');
+        }
+      });
+
+      document.addEventListener('keydown', (evt) => {
+        if (evt.key === 'Escape') {
+          el.llmModal.classList.remove('show');
         }
       });
 

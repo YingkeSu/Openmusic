@@ -11,54 +11,55 @@ from .ai_config import LLMRuntimeConfig
 from .composer import KEY_ROOT
 from .errors import ServiceError
 from .models import Score, ScoreMeta, ScoreNote
+from .styles import get_style_profile
 from .utils import clamp, midi_to_pitch, parse_pitch, pitch_to_midi
 
 
 @dataclass
 class AIComposer:
-    temperature: float = 0.7
+    temperature: float = 0.55
 
     def compose(self, intent: dict[str, Any], runtime: LLMRuntimeConfig) -> Score:
+        score, _ = self.compose_with_debug(intent, runtime)
+        return score
+
+    def compose_with_debug(
+        self, intent: dict[str, Any], runtime: LLMRuntimeConfig
+    ) -> tuple[Score, dict[str, Any]]:
         if not runtime.enabled:
             raise ServiceError(2001, "AI compose is not enabled: missing API key/base_url/model")
 
-        plan = self._generate_plan(intent, runtime)
-        return self._plan_to_score(intent, plan)
+        plan, debug = self._generate_plan(intent, runtime)
+        return self._plan_to_score(intent, plan), debug
 
-    def _generate_plan(self, intent: dict[str, Any], runtime: LLMRuntimeConfig) -> dict[str, Any]:
+    def _generate_plan(
+        self, intent: dict[str, Any], runtime: LLMRuntimeConfig
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
         tempo = int(intent["tempo_bpm"])
         duration_sec = int(intent["duration_sec"])
         beats_per_bar = 4
         total_beats = max(4, int(round(tempo * duration_sec / 60.0)))
         bars = math.ceil(total_beats / beats_per_bar)
+        expected_notes = bars * beats_per_bar
 
-        payload = {
+        system_prompt = self._build_system_prompt()
+        user_prompt = self._build_user_prompt(
+            intent=intent,
+            bars=bars,
+            beats_per_bar=beats_per_bar,
+            expected_notes=expected_notes,
+        )
+
+        request_payload = {
             "model": runtime.model,
             "messages": [
                 {
                     "role": "system",
-                    "content": (
-                        "You are a piano melody arranger. Output strict JSON only, without markdown. "
-                        "The JSON must include keys: meta, notes. "
-                        "notes must be a list of exactly one quarter-note per beat."
-                    ),
+                    "content": system_prompt,
                 },
                 {
                     "role": "user",
-                    "content": (
-                        "Generate a structured melody for solo piano with the constraints below.\\n"
-                        f"title: {intent['title']}\\n"
-                        f"style: {intent['style']}\\n"
-                        f"mood: {intent['mood']}\\n"
-                        f"tempo_bpm: {tempo}\\n"
-                        f"key: {intent['key']}\\n"
-                        f"difficulty: {intent['difficulty']}\\n"
-                        f"reference: {intent['reference']}\\n"
-                        f"time_signature: 4/4\\n"
-                        f"bars: {bars}\\n"
-                        "Output schema example: {\"meta\": {\"time_signature\": \"4/4\", \"bars\": 8}, "
-                        "\"notes\": [{\"bar\":1,\"beat\":1.0,\"pitch\":\"D4\",\"dur\":\"1/4\",\"vel\":72}]}."
-                    ),
+                    "content": user_prompt,
                 },
             ],
             "temperature": self.temperature,
@@ -66,7 +67,7 @@ class AIComposer:
             "stream": False,
         }
 
-        response = self._post_chat_completion(runtime, payload)
+        response = self._post_chat_completion(runtime, request_payload)
         content = (
             response.get("choices", [{}])[0]
             .get("message", {})
@@ -76,13 +77,25 @@ class AIComposer:
             raise ServiceError(2001, "empty AI response")
 
         try:
-            payload = json.loads(content)
+            plan = json.loads(content)
         except json.JSONDecodeError as exc:
-            raise ServiceError(2001, f"invalid JSON from AI: {exc}") from exc
+            plan = self._extract_json_object(content)
+            if plan is None:
+                raise ServiceError(2001, f"invalid JSON from AI: {exc}") from exc
 
-        if not isinstance(payload, dict):
+        if not isinstance(plan, dict):
             raise ServiceError(2001, "AI response JSON must be an object")
-        return payload
+
+        debug = {
+            "provider": runtime.provider_id,
+            "model": runtime.model,
+            "base_url": runtime.base_url,
+            "request_payload": request_payload,
+            "raw_response": response,
+            "raw_content": content,
+            "parsed_plan": plan,
+        }
+        return plan, debug
 
     def _post_chat_completion(self, runtime: LLMRuntimeConfig, payload: dict[str, Any]) -> dict[str, Any]:
         url = runtime.base_url.rstrip("/") + "/chat/completions"
@@ -115,6 +128,76 @@ class AIComposer:
         if not isinstance(parsed, dict):
             raise ServiceError(2001, "AI response root must be JSON object")
         return parsed
+
+    def _build_system_prompt(self) -> str:
+        return (
+            "You are an expert piano arranger for sheet-music-first generation. "
+            "Return strict JSON only (no markdown, no prose). "
+            "You must respect rhythm closure and bar boundaries, and keep the melody singable/playable."
+        )
+
+    def _build_user_prompt(
+        self,
+        intent: dict[str, Any],
+        bars: int,
+        beats_per_bar: int,
+        expected_notes: int,
+    ) -> str:
+        style_id = str(intent.get("style", "custom"))
+        style_profile = get_style_profile(style_id)
+        prompt_rules = ", ".join(style_profile.prompt_rules) or "none"
+        harmony_rules = ", ".join(style_profile.harmony_rules) or "none"
+        eval_rules = ", ".join(style_profile.evaluation_rules) or "none"
+
+        return (
+            "Generate melody plan JSON for a solo piano right-hand line with exact timing grid.\n"
+            "Constraints:\n"
+            f"- title: {intent['title']}\n"
+            f"- style: {style_id}\n"
+            f"- mood: {intent['mood']}\n"
+            f"- tempo_bpm: {intent['tempo_bpm']}\n"
+            f"- key: {intent['key']}\n"
+            f"- difficulty: {intent['difficulty']}\n"
+            f"- reference: {intent['reference']}\n"
+            f"- time_signature: 4/4\n"
+            f"- bars: {bars}\n"
+            f"- beats_per_bar: {beats_per_bar}\n"
+            f"- expected_note_count: {expected_notes}\n"
+            "- pitch range target: D3 to A5 (playable piano melody)\n"
+            "- avoid repeating the same pitch for more than 3 consecutive beats\n"
+            "- prefer stepwise motion; allow occasional leaps for phrase peaks and cadences\n"
+            "- keep phrase arcs: rise in first half, settle in second half\n"
+            f"- style prompt rules: {prompt_rules}\n"
+            f"- style harmony rules: {harmony_rules}\n"
+            f"- style evaluation target: {eval_rules}\n"
+            "Output schema:\n"
+            "{\n"
+            "  \"meta\": {\"time_signature\": \"4/4\", \"bars\": <int>, \"style_hint\": \"<string>\"},\n"
+            "  \"notes\": [\n"
+            "    {\"bar\": 1, \"beat\": 1.0, \"pitch\": \"D4\", \"dur\": \"1/4\", \"vel\": 72}\n"
+            "  ]\n"
+            "}\n"
+            "Hard requirements:\n"
+            "- notes must be an array with exactly expected_note_count entries\n"
+            "- each bar must contain beats 1.0, 2.0, 3.0, 4.0 exactly once\n"
+            "- dur must be \"1/4\" for every note\n"
+            "- beat values must be one of [1.0, 2.0, 3.0, 4.0]\n"
+            "- pitch must use scientific pitch notation like C4, F#4, Bb3\n"
+        )
+
+    def _extract_json_object(self, text: str) -> dict[str, Any] | None:
+        start = text.find("{")
+        end = text.rfind("}")
+        if start == -1 or end == -1 or end <= start:
+            return None
+        segment = text[start : end + 1]
+        try:
+            parsed = json.loads(segment)
+        except json.JSONDecodeError:
+            return None
+        if isinstance(parsed, dict):
+            return parsed
+        return None
 
     def _plan_to_score(self, intent: dict[str, Any], plan: dict[str, Any]) -> Score:
         tempo = int(intent["tempo_bpm"])

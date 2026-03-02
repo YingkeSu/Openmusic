@@ -52,6 +52,9 @@ class Storage:
     def manifest_path(self, project_id: str, version: str) -> Path:
         return self.version_dir(project_id, version) / "manifest.json"
 
+    def llm_output_path(self, project_id: str, version: str) -> Path:
+        return self.version_dir(project_id, version) / "llm_output.json"
+
     def exports_dir(self, project_id: str, version: str) -> Path:
         return self.project_dir(project_id) / "exports" / version
 
