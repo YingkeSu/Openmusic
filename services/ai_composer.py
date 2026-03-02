@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import math
+import urllib.error
+import urllib.request
 from dataclasses import dataclass
 from typing import Any
 
@@ -24,54 +26,52 @@ class AIComposer:
         return self._plan_to_score(intent, plan)
 
     def _generate_plan(self, intent: dict[str, Any], runtime: LLMRuntimeConfig) -> dict[str, Any]:
-        try:
-            from openai import OpenAI
-        except Exception as exc:
-            raise ServiceError(2001, f"openai sdk is required for AI compose: {exc}") from exc
-
         tempo = int(intent["tempo_bpm"])
         duration_sec = int(intent["duration_sec"])
         beats_per_bar = 4
         total_beats = max(4, int(round(tempo * duration_sec / 60.0)))
         bars = math.ceil(total_beats / beats_per_bar)
 
-        client = OpenAI(api_key=runtime.api_key, base_url=runtime.base_url)
-        messages = [
-            {
-                "role": "system",
-                "content": (
-                    "You are a piano melody arranger. Output strict JSON only, without markdown. "
-                    "The JSON must include keys: meta, notes. "
-                    "notes must be a list of exactly one quarter-note per beat."
-                ),
-            },
-            {
-                "role": "user",
-                "content": (
-                    "Generate a structured melody for solo piano with the constraints below.\\n"
-                    f"title: {intent['title']}\\n"
-                    f"style: {intent['style']}\\n"
-                    f"mood: {intent['mood']}\\n"
-                    f"tempo_bpm: {tempo}\\n"
-                    f"key: {intent['key']}\\n"
-                    f"difficulty: {intent['difficulty']}\\n"
-                    f"reference: {intent['reference']}\\n"
-                    f"time_signature: 4/4\\n"
-                    f"bars: {bars}\\n"
-                    "Output schema example: {\"meta\": {\"time_signature\": \"4/4\", \"bars\": 8}, "
-                    "\"notes\": [{\"bar\":1,\"beat\":1.0,\"pitch\":\"D4\",\"dur\":\"1/4\",\"vel\":72}]}."
-                ),
-            },
-        ]
+        payload = {
+            "model": runtime.model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a piano melody arranger. Output strict JSON only, without markdown. "
+                        "The JSON must include keys: meta, notes. "
+                        "notes must be a list of exactly one quarter-note per beat."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        "Generate a structured melody for solo piano with the constraints below.\\n"
+                        f"title: {intent['title']}\\n"
+                        f"style: {intent['style']}\\n"
+                        f"mood: {intent['mood']}\\n"
+                        f"tempo_bpm: {tempo}\\n"
+                        f"key: {intent['key']}\\n"
+                        f"difficulty: {intent['difficulty']}\\n"
+                        f"reference: {intent['reference']}\\n"
+                        f"time_signature: 4/4\\n"
+                        f"bars: {bars}\\n"
+                        "Output schema example: {\"meta\": {\"time_signature\": \"4/4\", \"bars\": 8}, "
+                        "\"notes\": [{\"bar\":1,\"beat\":1.0,\"pitch\":\"D4\",\"dur\":\"1/4\",\"vel\":72}]}."
+                    ),
+                },
+            ],
+            "temperature": self.temperature,
+            "response_format": {"type": "json_object"},
+            "stream": False,
+        }
 
-        response = client.chat.completions.create(
-            model=runtime.model,
-            messages=messages,
-            temperature=self.temperature,
-            response_format={"type": "json_object"},
+        response = self._post_chat_completion(runtime, payload)
+        content = (
+            response.get("choices", [{}])[0]
+            .get("message", {})
+            .get("content", "")
         )
-
-        content = response.choices[0].message.content or ""
         if not content.strip():
             raise ServiceError(2001, "empty AI response")
 
@@ -83,6 +83,38 @@ class AIComposer:
         if not isinstance(payload, dict):
             raise ServiceError(2001, "AI response JSON must be an object")
         return payload
+
+    def _post_chat_completion(self, runtime: LLMRuntimeConfig, payload: dict[str, Any]) -> dict[str, Any]:
+        url = runtime.base_url.rstrip("/") + "/chat/completions"
+        req = urllib.request.Request(
+            url=url,
+            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {runtime.api_key}",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                raw = resp.read().decode("utf-8")
+        except urllib.error.HTTPError as exc:
+            body = exc.read().decode("utf-8", errors="replace")
+            raise ServiceError(
+                2001,
+                f"AI HTTP error {exc.code}: {body[:500]}",
+            ) from exc
+        except urllib.error.URLError as exc:
+            raise ServiceError(2001, f"AI request failed: {exc.reason}") from exc
+
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise ServiceError(2001, f"AI response is not valid JSON: {exc}") from exc
+
+        if not isinstance(parsed, dict):
+            raise ServiceError(2001, "AI response root must be JSON object")
+        return parsed
 
     def _plan_to_score(self, intent: dict[str, Any], plan: dict[str, Any]) -> Score:
         tempo = int(intent["tempo_bpm"])
