@@ -8,6 +8,8 @@ from pathlib import Path
 from threading import Lock
 from typing import Any, Callable
 
+from .ai_composer import AIComposer
+from .ai_config import LLMConfigRegistry, resolve_llm_runtime
 from .audio_renderer import AudioRenderer
 from .compiler import Compiler
 from .composer import Composer
@@ -103,6 +105,11 @@ class Orchestrator:
         self.video_renderer = VideoRenderer()
         self.exporter = Exporter(self.root_dir)
         self.tasks = TaskStore(self.root_dir)
+        registry_path = self.root_dir / "services" / "config" / "llm_providers.json"
+        if not registry_path.exists():
+            registry_path = Path(__file__).resolve().parent / "config" / "llm_providers.json"
+        self.ai_registry = LLMConfigRegistry.load(registry_path)
+        self.ai_composer = AIComposer()
 
     def compose(self, payload: dict[str, Any]) -> dict[str, Any]:
         self._require_fields(
@@ -132,19 +139,37 @@ class Orchestrator:
         intent = dict(payload)
         if intent.get("style") != "ancient_cn":
             intent["style"] = "custom"
+        compose_mode = str(payload.get("compose_mode", "auto")).strip().lower() or "auto"
+        if compose_mode not in {"auto", "ai", "rule"}:
+            raise ServiceError(
+                ERROR_INVALID_PARAMS,
+                "compose_mode must be one of: auto | ai | rule",
+            )
 
         task = self.tasks.create(project_id, "", "compose")
         self.tasks.running(task.task_id)
 
         score: Score | None = None
         compose_error = ""
+        compose_engine = "rule"
+        ai_runtime = resolve_llm_runtime(self.root_dir, payload, self.ai_registry)
+        ai_requested = compose_mode == "ai" or (compose_mode == "auto" and ai_runtime.enabled)
+
         for attempt in range(1, MAX_LLM_RETRY + 1):
             try:
-                score = self.composer.compose(intent)
+                if ai_requested:
+                    score = self.ai_composer.compose(intent, ai_runtime)
+                    compose_engine = "ai"
+                else:
+                    score = self.composer.compose(intent)
+                    compose_engine = "rule"
                 break
             except Exception as exc:
                 compose_error = f"compose attempt {attempt} failed: {exc}"
                 self._log_task(task.task_id, compose_error)
+                if ai_requested and compose_mode == "auto":
+                    self._log_task(task.task_id, "fallback to rule composer in auto mode")
+                    ai_requested = False
 
         if score is None:
             self.tasks.failed(task.task_id, compose_error)
@@ -168,6 +193,9 @@ class Orchestrator:
         return {
             "task_id": task.task_id,
             "version": version,
+            "compose_engine": compose_engine,
+            "ai_provider": ai_runtime.provider_id if compose_engine == "ai" else "",
+            "ai_model": ai_runtime.model if compose_engine == "ai" else "",
             "score_json": to_relpath(self.storage.score_path(project_id, version), self.root_dir),
             "musicxml": to_relpath(musicxml_path, self.root_dir),
             "midi": to_relpath(midi_path, self.root_dir),

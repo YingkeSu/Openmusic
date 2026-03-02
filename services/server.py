@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import mimetypes
 import socket
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -50,6 +51,20 @@ class PianoRequestHandler(BaseHTTPRequestHandler):
 
         if parsed.path == "/web/index.html":
             self._serve_web_index()
+            return
+
+        if parsed.path.startswith("/projects/"):
+            self._serve_workspace_file(
+                relative_path=parsed.path.removeprefix("/"),
+                allowed_root=self.root_dir / "projects",
+            )
+            return
+
+        if parsed.path.startswith("/assets/"):
+            self._serve_workspace_file(
+                relative_path=parsed.path.removeprefix("/"),
+                allowed_root=self.root_dir / "assets",
+            )
             return
 
         if parsed.path.startswith("/api/v1/tasks/"):
@@ -114,6 +129,28 @@ class PianoRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+
+    def _serve_workspace_file(self, relative_path: str, allowed_root: Path) -> None:
+        requested = (self.root_dir / relative_path).resolve()
+        try:
+            requested.relative_to(allowed_root.resolve())
+        except ValueError:
+            self._send_json(403, {"code": 403, "message": "forbidden", "data": {}})
+            return
+
+        if not requested.exists() or not requested.is_file():
+            self._send_json(404, {"code": 404, "message": "not found", "data": {}})
+            return
+
+        ctype, _ = mimetypes.guess_type(str(requested))
+        content_type = ctype or "application/octet-stream"
+        body = requested.read_bytes()
+        self.send_response(200)
+        self._send_cors_headers()
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
 
 def run_server(host: str, port: int, root_dir: Path) -> None:
