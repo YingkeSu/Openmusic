@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import socket
 import threading
+import urllib.error
 import urllib.request
 from http.server import ThreadingHTTPServer
 from pathlib import Path
@@ -13,8 +14,11 @@ from services.server import PianoRequestHandler, _create_server_with_fallback
 
 def _http_get(url: str) -> tuple[int, str, bytes]:
     req = urllib.request.Request(url=url, method="GET")
-    with urllib.request.urlopen(req, timeout=5) as resp:
-        return resp.status, resp.headers.get("Content-Type", ""), resp.read()
+    try:
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            return resp.status, resp.headers.get("Content-Type", ""), resp.read()
+    except urllib.error.HTTPError as exc:
+        return exc.code, exc.headers.get("Content-Type", ""), exc.read()
 
 
 def test_web_root_and_web_path_available(tmp_path: Path) -> None:
@@ -22,6 +26,8 @@ def test_web_root_and_web_path_available(tmp_path: Path) -> None:
     handler.orchestrator = Orchestrator(root_dir=tmp_path)
     handler.root_dir = tmp_path
     handler.web_dir = Path(__file__).resolve().parent.parent / "app" / "web"
+    (tmp_path / "projects" / "x" / "v001").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "projects" / "x" / "v001" / "song.mp4").write_bytes(b"abc")
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
     host, port = server.server_address
@@ -44,6 +50,15 @@ def test_web_root_and_web_path_available(tmp_path: Path) -> None:
         assert "application/json" in ctype_health
         payload = json.loads(body_health.decode("utf-8"))
         assert payload["code"] == 0
+
+        status_file, ctype_file, body_file = _http_get(
+            f"http://{host}:{port}/projects/x/v001/song.mp4"
+        )
+        assert status_file == 200
+        assert body_file == b"abc"
+
+        status_forbid, _, _ = _http_get(f"http://{host}:{port}/projects/../.env")
+        assert status_forbid == 403
     finally:
         server.shutdown()
         server.server_close()

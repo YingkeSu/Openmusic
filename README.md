@@ -10,6 +10,8 @@ AI 自动编曲 MVP（文档 + 可运行本地服务实现）。
 4. 产物输出：`score.json + MusicXML + MIDI + WAV + MP4`（导出三件套）。
 5. 拖拽编辑对应的数据层回写（`pitch_shift`）。
 6. 日志与可观测：`logs/tasks`、`logs/render`、`logs/export`。
+7. AI 编曲支持 OpenAI 兼容格式（MVP 默认 DeepSeek provider，可配置扩展）。
+8. Web 入口可直接访问（`/`、`/web`），支持一键跑完整链路。
 
 ## 项目结构
 
@@ -33,7 +35,25 @@ python3 -m pip install -r requirements.txt
 python3 main.py --host 127.0.0.1 --port 8765
 ```
 
-### 3) 使用 CLI 走完整链路
+打开浏览器访问：`http://127.0.0.1:8765/`
+
+### 3) 配置 AI（DeepSeek MVP）
+
+在项目根目录创建 `.env`：
+
+```env
+DEEPSEEK_API_KEY=你的密钥
+```
+
+可选覆盖项：
+
+```env
+AI_PROVIDER=deepseek
+AI_MODEL=deepseek-chat
+AI_BASE_URL=https://api.deepseek.com/v1
+```
+
+### 4) 使用 CLI 走完整链路
 
 ```bash
 python3 -m app.desktop_cli compose \
@@ -45,8 +65,16 @@ python3 -m app.desktop_cli compose \
   --key D \
   --duration-sec 20 \
   --difficulty medium \
-  --reference "古风、空灵、可演奏"
+  --reference "古风、空灵、可演奏" \
+  --compose-mode auto \
+  --ai-provider deepseek
 ```
+
+`--compose-mode` 支持：
+
+- `auto`：若 AI 配置可用则用 AI，否则回退规则编曲（默认）。
+- `ai`：强制 AI 编曲，失败即报错。
+- `rule`：固定规则编曲，不调用外部模型。
 
 ```bash
 python3 -m app.desktop_cli render-audio \
@@ -71,7 +99,7 @@ python3 -m app.desktop_cli export \
   --targets musicxml midi mp4
 ```
 
-### 4) 运行测试
+### 5) 运行测试
 
 ```bash
 pytest -q
@@ -89,3 +117,4 @@ pytest -q
 
 1. 音频渲染使用本地合成（Python 内置实现）。
 2. 视频渲染优先调用本地 `ffmpeg`；若系统无 `ffmpeg`，会生成占位 `mp4` 文件并提示原因。
+3. Provider 注册表在 `services/config/llm_providers.json`，新增供应商无需改核心编排逻辑。

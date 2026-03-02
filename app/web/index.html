@@ -7,11 +7,13 @@
     <style>
       :root {
         --bg: #f3f0e8;
-        --card: #fffdf8;
+        --paper: #fffdf8;
         --line: #d9d2c4;
         --ink: #2f2a24;
-        --muted: #7a7064;
+        --muted: #766f63;
         --accent: #8f5a2a;
+        --ok: #2e7d32;
+        --warn: #ad6b00;
       }
       * { box-sizing: border-box; }
       body {
@@ -19,58 +21,60 @@
         font-family: "Noto Serif SC", "Source Han Serif SC", serif;
         color: var(--ink);
         background:
-          radial-gradient(circle at 80% -20%, #e6dbc5 0%, transparent 55%),
-          radial-gradient(circle at 0% 120%, #ddd1bb 0%, transparent 45%),
+          radial-gradient(circle at 85% -10%, #e5d9c1 0%, transparent 52%),
+          radial-gradient(circle at -5% 110%, #ddd2bc 0%, transparent 42%),
           var(--bg);
-        min-height: 100vh;
       }
       .wrap {
-        max-width: 920px;
-        margin: 40px auto;
-        padding: 24px;
+        max-width: 1100px;
+        margin: 28px auto;
+        padding: 16px;
       }
-      .card {
-        background: var(--card);
+      .panel {
+        background: var(--paper);
         border: 1px solid var(--line);
         border-radius: 14px;
         padding: 18px;
         box-shadow: 0 8px 30px rgba(47, 42, 36, 0.08);
       }
       h1 {
-        margin: 0 0 8px;
+        margin: 0;
         font-size: 28px;
       }
-      p {
-        margin: 8px 0;
+      .sub {
         color: var(--muted);
+        margin: 8px 0 18px;
       }
       .grid {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
         gap: 12px;
-        margin-top: 16px;
       }
-      .endpoint {
+      label {
+        display: block;
+        font-size: 13px;
+        color: var(--muted);
+        margin-bottom: 4px;
+      }
+      input, select {
+        width: 100%;
         border: 1px solid var(--line);
-        border-left: 4px solid var(--accent);
-        border-radius: 10px;
-        padding: 10px 12px;
+        border-radius: 8px;
+        padding: 9px 10px;
+        font: inherit;
+        color: var(--ink);
         background: #fff;
       }
-      .method {
-        font-weight: 700;
+      .section-title {
+        margin: 18px 0 10px;
+        font-size: 15px;
         color: var(--accent);
-        margin-right: 8px;
-      }
-      .path {
-        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-        word-break: break-all;
       }
       .actions {
-        margin-top: 16px;
+        margin-top: 14px;
         display: flex;
-        gap: 10px;
         flex-wrap: wrap;
+        gap: 10px;
       }
       button {
         border: 1px solid var(--accent);
@@ -79,79 +83,319 @@
         border-radius: 8px;
         padding: 9px 14px;
         cursor: pointer;
+        font: inherit;
       }
       button.secondary {
         background: transparent;
         color: var(--accent);
       }
-      pre {
-        margin-top: 14px;
-        background: #272822;
-        color: #f5f4ef;
-        padding: 12px;
-        border-radius: 8px;
-        overflow: auto;
-        min-height: 90px;
+      button:disabled {
+        opacity: 0.45;
+        cursor: not-allowed;
       }
+      .status {
+        margin-top: 10px;
+        font-size: 14px;
+      }
+      .status.ok { color: var(--ok); }
+      .status.warn { color: var(--warn); }
+      pre {
+        margin-top: 12px;
+        background: #272822;
+        color: #f4f4ef;
+        border-radius: 8px;
+        padding: 12px;
+        min-height: 130px;
+        overflow: auto;
+        white-space: pre-wrap;
+      }
+      .result {
+        margin-top: 12px;
+        padding: 10px 12px;
+        border: 1px dashed var(--line);
+        border-radius: 8px;
+        font-size: 14px;
+      }
+      .result a {
+        color: var(--accent);
+      }
+      video {
+        margin-top: 12px;
+        width: 100%;
+        max-width: 760px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #111;
+      }
+      .tiny { font-size: 12px; color: var(--muted); }
     </style>
   </head>
   <body>
     <div class="wrap">
-      <div class="card">
-        <h1>Piano for AI 本地服务</h1>
-        <p>Web 入口已可访问。你可以在这里确认服务状态并调用关键接口。</p>
+      <div class="panel">
+        <h1>Piano for AI 本地 Web 入口</h1>
+        <div class="sub">支持 AI 编曲（OpenAI 兼容接口）与本地渲染导出链路。</div>
+
+        <div class="section-title">编曲参数</div>
         <div class="grid">
-          <div class="endpoint"><span class="method">GET</span><span class="path">/healthz</span></div>
-          <div class="endpoint"><span class="method">POST</span><span class="path">/api/v1/compose</span></div>
-          <div class="endpoint"><span class="method">POST</span><span class="path">/api/v1/render/audio</span></div>
-          <div class="endpoint"><span class="method">POST</span><span class="path">/api/v1/render/video</span></div>
-          <div class="endpoint"><span class="method">POST</span><span class="path">/api/v1/score/edit</span></div>
-          <div class="endpoint"><span class="method">POST</span><span class="path">/api/v1/export</span></div>
-          <div class="endpoint"><span class="method">GET</span><span class="path">/api/v1/tasks/{task_id}</span></div>
+          <div><label>Project ID</label><input id="projectId" value="web_ai_demo" /></div>
+          <div><label>标题</label><input id="title" value="江南夜雨" /></div>
+          <div><label>风格</label><select id="style"><option value="ancient_cn">ancient_cn</option><option value="custom">custom</option></select></div>
+          <div><label>情绪</label><input id="mood" value="calm" /></div>
+          <div><label>速度 BPM</label><input id="tempo" type="number" min="40" max="200" value="88" /></div>
+          <div><label>调式</label><input id="key" value="D" /></div>
+          <div><label>时长（秒）</label><input id="duration" type="number" min="4" max="60" value="16" /></div>
+          <div><label>难度</label><select id="difficulty"><option value="easy">easy</option><option selected value="medium">medium</option><option value="hard">hard</option></select></div>
+          <div style="grid-column: 1 / -1;"><label>参考描述</label><input id="reference" value="古风、空灵、可演奏" /></div>
         </div>
+
+        <div class="section-title">AI 设置（可选）</div>
+        <div class="grid">
+          <div>
+            <label>编曲模式</label>
+            <select id="composeMode">
+              <option value="auto" selected>auto（优先 AI，失败回退规则）</option>
+              <option value="ai">ai（强制 AI）</option>
+              <option value="rule">rule（规则编曲）</option>
+            </select>
+          </div>
+          <div><label>Provider</label><input id="aiProvider" value="deepseek" /></div>
+          <div><label>Model（可留空）</label><input id="aiModel" value="" placeholder="例如 deepseek-chat" /></div>
+          <div><label>Base URL（可留空）</label><input id="aiBaseUrl" value="" placeholder="例如 https://api.deepseek.com/v1" /></div>
+        </div>
+        <div class="tiny">API Key 不在网页输入，统一从服务端 `.env` 读取。</div>
+
         <div class="actions">
-          <button id="healthBtn">检查 Health</button>
-          <button class="secondary" id="composeBtn">生成示例编曲</button>
+          <button id="healthBtn" class="secondary">检查服务状态</button>
+          <button id="composeBtn">1) 生成谱面</button>
+          <button id="renderAudioBtn" class="secondary" disabled>2) 渲染音频</button>
+          <button id="renderVideoBtn" class="secondary" disabled>3) 渲染视频</button>
+          <button id="exportBtn" class="secondary" disabled>4) 导出三件套</button>
+          <button id="pipelineBtn">一键跑完整链路</button>
         </div>
-        <pre id="output">等待操作...</pre>
+
+        <div id="status" class="status">等待操作...</div>
+        <pre id="output">{}</pre>
+        <div id="result" class="result" hidden></div>
+        <video id="video" controls hidden></video>
       </div>
     </div>
+
     <script>
-      const out = document.getElementById('output');
-      function show(data) {
-        out.textContent = typeof data === 'string' ? data : JSON.stringify(data, null, 2);
+      const state = {
+        composeData: null,
+        audioData: null,
+        videoData: null,
+        exportData: null,
+      };
+
+      const outputEl = document.getElementById('output');
+      const statusEl = document.getElementById('status');
+      const resultEl = document.getElementById('result');
+      const videoEl = document.getElementById('video');
+
+      const composeBtn = document.getElementById('composeBtn');
+      const renderAudioBtn = document.getElementById('renderAudioBtn');
+      const renderVideoBtn = document.getElementById('renderVideoBtn');
+      const exportBtn = document.getElementById('exportBtn');
+      const pipelineBtn = document.getElementById('pipelineBtn');
+
+      function setStatus(text, level='ok') {
+        statusEl.textContent = text;
+        statusEl.className = `status ${level}`;
       }
+
+      function show(data) {
+        outputEl.textContent = JSON.stringify(data, null, 2);
+      }
+
+      function setButtons() {
+        renderAudioBtn.disabled = !state.composeData;
+        renderVideoBtn.disabled = !state.audioData;
+        exportBtn.disabled = !state.videoData;
+      }
+
+      function payloadFromForm() {
+        return {
+          project_id: document.getElementById('projectId').value.trim(),
+          title: document.getElementById('title').value.trim(),
+          style: document.getElementById('style').value,
+          mood: document.getElementById('mood').value.trim(),
+          tempo_bpm: Number(document.getElementById('tempo').value),
+          key: document.getElementById('key').value.trim(),
+          duration_sec: Number(document.getElementById('duration').value),
+          difficulty: document.getElementById('difficulty').value,
+          reference: document.getElementById('reference').value.trim(),
+          compose_mode: document.getElementById('composeMode').value,
+          ai_provider: document.getElementById('aiProvider').value.trim(),
+          ai_model: document.getElementById('aiModel').value.trim(),
+          ai_base_url: document.getElementById('aiBaseUrl').value.trim(),
+        };
+      }
+
+      async function callApi(path, payload) {
+        const res = await fetch(path, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(payload),
+        });
+        const data = await res.json();
+        show(data);
+        if (data.code !== 0) {
+          throw new Error(`${path} failed: ${data.message}`);
+        }
+        return data.data;
+      }
+
+      function projectId() {
+        return document.getElementById('projectId').value.trim();
+      }
+
+      function version() {
+        return state.composeData?.version || '';
+      }
+
+      function renderResult() {
+        const pid = projectId();
+        const ver = version();
+        if (!pid || !ver) {
+          resultEl.hidden = true;
+          return;
+        }
+
+        const mp4Path = state.videoData?.mp4_path
+          ? `/${state.videoData.mp4_path}`
+          : `/projects/${pid}/${ver}/song.mp4`;
+
+        resultEl.hidden = false;
+        resultEl.innerHTML = [
+          `<div><strong>当前版本:</strong> ${ver}</div>`,
+          `<div><strong>MP4:</strong> <a href="${mp4Path}" target="_blank">${mp4Path}</a></div>`,
+          `<div><strong>MusicXML:</strong> <a href="/projects/${pid}/${ver}/song.musicxml" target="_blank">/projects/${pid}/${ver}/song.musicxml</a></div>`,
+          `<div><strong>MIDI:</strong> <a href="/projects/${pid}/${ver}/song.mid" target="_blank">/projects/${pid}/${ver}/song.mid</a></div>`
+        ].join('');
+
+        videoEl.hidden = false;
+        videoEl.src = `${mp4Path}?t=${Date.now()}`;
+      }
+
       document.getElementById('healthBtn').addEventListener('click', async () => {
         try {
           const res = await fetch('/healthz');
-          show(await res.json());
+          const data = await res.json();
+          show(data);
+          setStatus('服务正常。', 'ok');
         } catch (err) {
           show(String(err));
+          setStatus('服务不可用。', 'warn');
         }
       });
-      document.getElementById('composeBtn').addEventListener('click', async () => {
+
+      composeBtn.addEventListener('click', async () => {
         try {
-          const payload = {
-            project_id: 'web_demo_project',
-            title: '网页入口验证',
-            style: 'ancient_cn',
-            mood: 'calm',
-            tempo_bpm: 88,
-            key: 'D',
-            duration_sec: 12,
-            difficulty: 'medium',
-            reference: '古风'
-          };
-          const res = await fetch('/api/v1/compose', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify(payload)
-          });
-          show(await res.json());
+          setStatus('正在生成谱面...', 'ok');
+          state.composeData = await callApi('/api/v1/compose', payloadFromForm());
+          state.audioData = null;
+          state.videoData = null;
+          state.exportData = null;
+          setButtons();
+          setStatus(`谱面生成成功（engine=${state.composeData.compose_engine || 'rule'}）。`, 'ok');
+          renderResult();
         } catch (err) {
-          show(String(err));
+          setStatus(String(err), 'warn');
         }
       });
+
+      renderAudioBtn.addEventListener('click', async () => {
+        try {
+          setStatus('正在渲染音频...', 'ok');
+          state.audioData = await callApi('/api/v1/render/audio', {
+            project_id: projectId(),
+            version: version(),
+            midi_path: state.composeData.midi,
+            soundfont_path: 'assets/soundfonts/piano.sf2',
+          });
+          setButtons();
+          setStatus('音频渲染完成。', 'ok');
+        } catch (err) {
+          setStatus(String(err), 'warn');
+        }
+      });
+
+      renderVideoBtn.addEventListener('click', async () => {
+        try {
+          setStatus('正在渲染视频...', 'ok');
+          state.videoData = await callApi('/api/v1/render/video', {
+            project_id: projectId(),
+            version: version(),
+            musicxml_path: state.composeData.musicxml,
+            wav_path: state.audioData.wav_path,
+            highlight_scheme: { played: '#000000', unplayed: '#C8C8C8' },
+          });
+          setButtons();
+          setStatus('视频渲染完成。', 'ok');
+          renderResult();
+        } catch (err) {
+          setStatus(String(err), 'warn');
+        }
+      });
+
+      exportBtn.addEventListener('click', async () => {
+        try {
+          setStatus('正在导出三件套...', 'ok');
+          state.exportData = await callApi('/api/v1/export', {
+            project_id: projectId(),
+            version: version(),
+            targets: ['musicxml', 'midi', 'mp4'],
+          });
+          setStatus('导出完成。', 'ok');
+          renderResult();
+        } catch (err) {
+          setStatus(String(err), 'warn');
+        }
+      });
+
+      pipelineBtn.addEventListener('click', async () => {
+        try {
+          composeBtn.disabled = true;
+          renderAudioBtn.disabled = true;
+          renderVideoBtn.disabled = true;
+          exportBtn.disabled = true;
+          pipelineBtn.disabled = true;
+
+          setStatus('开始执行完整链路...', 'ok');
+          state.composeData = await callApi('/api/v1/compose', payloadFromForm());
+          state.audioData = await callApi('/api/v1/render/audio', {
+            project_id: projectId(),
+            version: version(),
+            midi_path: state.composeData.midi,
+            soundfont_path: 'assets/soundfonts/piano.sf2',
+          });
+          state.videoData = await callApi('/api/v1/render/video', {
+            project_id: projectId(),
+            version: version(),
+            musicxml_path: state.composeData.musicxml,
+            wav_path: state.audioData.wav_path,
+            highlight_scheme: { played: '#000000', unplayed: '#C8C8C8' },
+          });
+          state.exportData = await callApi('/api/v1/export', {
+            project_id: projectId(),
+            version: version(),
+            targets: ['musicxml', 'midi', 'mp4'],
+          });
+
+          setStatus('完整链路执行成功。', 'ok');
+          renderResult();
+        } catch (err) {
+          setStatus(String(err), 'warn');
+        } finally {
+          composeBtn.disabled = false;
+          pipelineBtn.disabled = false;
+          setButtons();
+        }
+      });
+
+      setButtons();
     </script>
   </body>
 </html>

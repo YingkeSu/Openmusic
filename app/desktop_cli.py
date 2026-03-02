@@ -27,6 +27,16 @@ def main() -> None:
     compose.add_argument("--duration-sec", type=int, default=60)
     compose.add_argument("--difficulty", default="medium")
     compose.add_argument("--reference", default="古风、空灵、可演奏")
+    compose.add_argument(
+        "--compose-mode",
+        default="auto",
+        choices=["auto", "ai", "rule"],
+        help="auto: AI if configured, else rule; ai: force AI; rule: deterministic composer",
+    )
+    compose.add_argument("--ai-provider", default="")
+    compose.add_argument("--ai-model", default="")
+    compose.add_argument("--ai-base-url", default="")
+    compose.add_argument("--ai-api-key", default="")
 
     render_audio = subparsers.add_parser("render-audio")
     render_audio.add_argument("--project-id", required=True)
@@ -74,6 +84,11 @@ def main() -> None:
             "duration_sec": args.duration_sec,
             "difficulty": args.difficulty,
             "reference": args.reference,
+            "compose_mode": args.compose_mode,
+            "ai_provider": args.ai_provider,
+            "ai_model": args.ai_model,
+            "ai_base_url": args.ai_base_url,
+            "ai_api_key": args.ai_api_key,
         }
         print_response(handle_call(orchestrator.compose, payload))
         return
