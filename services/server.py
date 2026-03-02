@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import socket
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
@@ -11,6 +12,13 @@ from .orchestrator import Orchestrator, handle_call
 
 class PianoRequestHandler(BaseHTTPRequestHandler):
     orchestrator: Orchestrator
+    root_dir: Path
+    web_dir: Path
+
+    def do_OPTIONS(self) -> None:  # noqa: N802
+        self.send_response(204)
+        self._send_cors_headers()
+        self.end_headers()
 
     def do_POST(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
@@ -36,6 +44,14 @@ class PianoRequestHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
+        if parsed.path in {"/", "/web", "/web/"}:
+            self._serve_web_index()
+            return
+
+        if parsed.path == "/web/index.html":
+            self._serve_web_index()
+            return
+
         if parsed.path.startswith("/api/v1/tasks/"):
             task_id = parsed.path.removeprefix("/api/v1/tasks/")
             response = handle_call(lambda _: self.orchestrator.get_task(task_id), {})
@@ -65,17 +81,50 @@ class PianoRequestHandler(BaseHTTPRequestHandler):
     def _send_json(self, status: int, payload: dict) -> None:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
+        self._send_cors_headers()
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
 
+    def _serve_web_index(self) -> None:
+        html_path = self.web_dir / "index.html"
+        if not html_path.exists():
+            self._send_json(
+                500,
+                {
+                    "code": 500,
+                    "message": f"web entry not found: {html_path}",
+                    "data": {},
+                },
+            )
+            return
+        self._send_html(200, html_path.read_text(encoding="utf-8"))
+
+    def _send_html(self, status: int, html: str) -> None:
+        body = html.encode("utf-8")
+        self.send_response(status)
+        self._send_cors_headers()
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _send_cors_headers(self) -> None:
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+
 
 def run_server(host: str, port: int, root_dir: Path) -> None:
     orchestrator = Orchestrator(root_dir=root_dir)
     PianoRequestHandler.orchestrator = orchestrator
-    server = ThreadingHTTPServer((host, port), PianoRequestHandler)
-    print(f"Piano service running on http://{host}:{port}")
+    PianoRequestHandler.root_dir = root_dir
+    PianoRequestHandler.web_dir = root_dir / "app" / "web"
+    server = _create_server_with_fallback(host, port, PianoRequestHandler)
+    actual_port = server.server_port
+    print(f"Piano service running on http://{host}:{actual_port}")
+    print(f"Web entry: http://{host}:{actual_port}/")
     print(f"Workspace root: {root_dir}")
     try:
         server.serve_forever()
@@ -83,6 +132,26 @@ def run_server(host: str, port: int, root_dir: Path) -> None:
         pass
     finally:
         server.server_close()
+
+
+def _create_server_with_fallback(
+    host: str,
+    preferred_port: int,
+    handler: type[BaseHTTPRequestHandler],
+) -> ThreadingHTTPServer:
+    try:
+        return ThreadingHTTPServer((host, preferred_port), handler)
+    except OSError as exc:
+        if exc.errno not in {48, 98}:
+            raise
+    # Port conflict: fallback to a random free port.
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind((host, 0))
+        fallback_port = sock.getsockname()[1]
+    print(
+        f"[warn] port {preferred_port} is in use, switched to available port {fallback_port}",
+    )
+    return ThreadingHTTPServer((host, fallback_port), handler)
 
 
 def main() -> None:

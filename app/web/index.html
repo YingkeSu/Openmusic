@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Piano for AI - Local Web</title>
+    <style>
+      :root {
+        --bg: #f3f0e8;
+        --card: #fffdf8;
+        --line: #d9d2c4;
+        --ink: #2f2a24;
+        --muted: #7a7064;
+        --accent: #8f5a2a;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: "Noto Serif SC", "Source Han Serif SC", serif;
+        color: var(--ink);
+        background:
+          radial-gradient(circle at 80% -20%, #e6dbc5 0%, transparent 55%),
+          radial-gradient(circle at 0% 120%, #ddd1bb 0%, transparent 45%),
+          var(--bg);
+        min-height: 100vh;
+      }
+      .wrap {
+        max-width: 920px;
+        margin: 40px auto;
+        padding: 24px;
+      }
+      .card {
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 18px;
+        box-shadow: 0 8px 30px rgba(47, 42, 36, 0.08);
+      }
+      h1 {
+        margin: 0 0 8px;
+        font-size: 28px;
+      }
+      p {
+        margin: 8px 0;
+        color: var(--muted);
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+        gap: 12px;
+        margin-top: 16px;
+      }
+      .endpoint {
+        border: 1px solid var(--line);
+        border-left: 4px solid var(--accent);
+        border-radius: 10px;
+        padding: 10px 12px;
+        background: #fff;
+      }
+      .method {
+        font-weight: 700;
+        color: var(--accent);
+        margin-right: 8px;
+      }
+      .path {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        word-break: break-all;
+      }
+      .actions {
+        margin-top: 16px;
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+      button {
+        border: 1px solid var(--accent);
+        background: var(--accent);
+        color: #fff;
+        border-radius: 8px;
+        padding: 9px 14px;
+        cursor: pointer;
+      }
+      button.secondary {
+        background: transparent;
+        color: var(--accent);
+      }
+      pre {
+        margin-top: 14px;
+        background: #272822;
+        color: #f5f4ef;
+        padding: 12px;
+        border-radius: 8px;
+        overflow: auto;
+        min-height: 90px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="card">
+        <h1>Piano for AI 本地服务</h1>
+        <p>Web 入口已可访问。你可以在这里确认服务状态并调用关键接口。</p>
+        <div class="grid">
+          <div class="endpoint"><span class="method">GET</span><span class="path">/healthz</span></div>
+          <div class="endpoint"><span class="method">POST</span><span class="path">/api/v1/compose</span></div>
+          <div class="endpoint"><span class="method">POST</span><span class="path">/api/v1/render/audio</span></div>
+          <div class="endpoint"><span class="method">POST</span><span class="path">/api/v1/render/video</span></div>
+          <div class="endpoint"><span class="method">POST</span><span class="path">/api/v1/score/edit</span></div>
+          <div class="endpoint"><span class="method">POST</span><span class="path">/api/v1/export</span></div>
+          <div class="endpoint"><span class="method">GET</span><span class="path">/api/v1/tasks/{task_id}</span></div>
+        </div>
+        <div class="actions">
+          <button id="healthBtn">检查 Health</button>
+          <button class="secondary" id="composeBtn">生成示例编曲</button>
+        </div>
+        <pre id="output">等待操作...</pre>
+      </div>
+    </div>
+    <script>
+      const out = document.getElementById('output');
+      function show(data) {
+        out.textContent = typeof data === 'string' ? data : JSON.stringify(data, null, 2);
+      }
+      document.getElementById('healthBtn').addEventListener('click', async () => {
+        try {
+          const res = await fetch('/healthz');
+          show(await res.json());
+        } catch (err) {
+          show(String(err));
+        }
+      });
+      document.getElementById('composeBtn').addEventListener('click', async () => {
+        try {
+          const payload = {
+            project_id: 'web_demo_project',
+            title: '网页入口验证',
+            style: 'ancient_cn',
+            mood: 'calm',
+            tempo_bpm: 88,
+            key: 'D',
+            duration_sec: 12,
+            difficulty: 'medium',
+            reference: '古风'
+          };
+          const res = await fetch('/api/v1/compose', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(payload)
+          });
+          show(await res.json());
+        } catch (err) {
+          show(String(err));
+        }
+      });
+    </script>
+  </body>
+</html>
