@@ -74,6 +74,30 @@ class PianoRequestHandler(BaseHTTPRequestHandler):
             self._send_json(status, response)
             return
 
+        if parsed.path == "/api/v1/projects":
+            response = handle_call(lambda _: self.orchestrator.list_projects(), {})
+            status = 200 if response["code"] == 0 else 400
+            self._send_json(status, response)
+            return
+
+        if parsed.path.startswith("/api/v1/projects/"):
+            segments = [seg for seg in parsed.path.split("/") if seg]
+            # /api/v1/projects/{project_id}
+            if len(segments) == 4:
+                project_id = segments[3]
+                response = handle_call(lambda _: self.orchestrator.get_project(project_id), {})
+                status = 200 if response["code"] == 0 else 404
+                self._send_json(status, response)
+                return
+            # /api/v1/projects/{project_id}/score/{version}
+            if len(segments) == 6 and segments[4] == "score":
+                project_id = segments[3]
+                version = segments[5]
+                response = handle_call(lambda _: self.orchestrator.get_score(project_id, version), {})
+                status = 200 if response["code"] == 0 else 404
+                self._send_json(status, response)
+                return
+
         if parsed.path == "/healthz":
             self._send_json(200, {"code": 0, "message": "ok", "data": {"status": "healthy"}})
             return

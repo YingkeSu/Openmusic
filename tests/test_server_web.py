@@ -23,11 +23,26 @@ def _http_get(url: str) -> tuple[int, str, bytes]:
 
 def test_web_root_and_web_path_available(tmp_path: Path) -> None:
     handler = PianoRequestHandler
-    handler.orchestrator = Orchestrator(root_dir=tmp_path)
+    orchestrator = Orchestrator(root_dir=tmp_path)
+    handler.orchestrator = orchestrator
     handler.root_dir = tmp_path
     handler.web_dir = Path(__file__).resolve().parent.parent / "app" / "web"
     (tmp_path / "projects" / "x" / "v001").mkdir(parents=True, exist_ok=True)
     (tmp_path / "projects" / "x" / "v001" / "song.mp4").write_bytes(b"abc")
+    orchestrator.compose(
+        {
+            "project_id": "web_test_project",
+            "title": "web test",
+            "style": "ancient_cn",
+            "mood": "calm",
+            "tempo_bpm": 88,
+            "key": "D",
+            "duration_sec": 8,
+            "difficulty": "medium",
+            "reference": "test",
+            "compose_mode": "rule",
+        }
+    )
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
     host, port = server.server_address
@@ -59,6 +74,29 @@ def test_web_root_and_web_path_available(tmp_path: Path) -> None:
 
         status_forbid, _, _ = _http_get(f"http://{host}:{port}/projects/../.env")
         assert status_forbid == 403
+
+        status_projects, _, body_projects = _http_get(f"http://{host}:{port}/api/v1/projects")
+        assert status_projects == 200
+        payload_projects = json.loads(body_projects.decode("utf-8"))
+        assert payload_projects["code"] == 0
+        project_ids = [item["project_id"] for item in payload_projects["data"]["projects"]]
+        assert "web_test_project" in project_ids
+
+        status_project, _, body_project = _http_get(
+            f"http://{host}:{port}/api/v1/projects/web_test_project"
+        )
+        assert status_project == 200
+        payload_project = json.loads(body_project.decode("utf-8"))
+        assert payload_project["code"] == 0
+        assert payload_project["data"]["project"]["project_id"] == "web_test_project"
+
+        status_score, _, body_score = _http_get(
+            f"http://{host}:{port}/api/v1/projects/web_test_project/score/v001"
+        )
+        assert status_score == 200
+        payload_score = json.loads(body_score.decode("utf-8"))
+        assert payload_score["code"] == 0
+        assert payload_score["data"]["score"]["meta"]["title"] == "web test"
     finally:
         server.shutdown()
         server.server_close()

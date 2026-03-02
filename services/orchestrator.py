@@ -436,6 +436,62 @@ class Orchestrator:
             raise ServiceError(ERROR_INVALID_PARAMS, f"task not found: {task_id}")
         return record.to_dict()
 
+    def list_projects(self) -> dict[str, Any]:
+        projects_dir = self.storage.projects_dir
+        projects: list[dict[str, Any]] = []
+        if projects_dir.exists():
+            for project_dir in sorted((p for p in projects_dir.iterdir() if p.is_dir()), key=lambda p: p.name):
+                project_id = project_dir.name
+                project_meta = self.storage.load_project_meta(project_id) or {
+                    "project_id": project_id,
+                    "title": project_id,
+                    "created_at": "",
+                    "updated_at": "",
+                    "active_version": "",
+                }
+                versions = self.storage.list_versions(project_id)
+                projects.append(
+                    {
+                        "project_id": project_meta.get("project_id", project_id),
+                        "title": project_meta.get("title", project_id),
+                        "created_at": project_meta.get("created_at", ""),
+                        "updated_at": project_meta.get("updated_at", ""),
+                        "active_version": project_meta.get("active_version", ""),
+                        "versions": versions,
+                    }
+                )
+        projects.sort(key=lambda item: str(item.get("updated_at", "")), reverse=True)
+        return {"projects": projects}
+
+    def get_project(self, project_id: str) -> dict[str, Any]:
+        project_id = project_id.strip()
+        if not project_id:
+            raise ServiceError(ERROR_INVALID_PARAMS, "project_id is required")
+        project_meta = self.storage.load_project_meta(project_id)
+        if project_meta is None:
+            raise ServiceError(ERROR_INVALID_PARAMS, f"project not found: {project_id}")
+        versions = self.storage.list_versions(project_id)
+        return {
+            "project": project_meta,
+            "versions": versions,
+        }
+
+    def get_score(self, project_id: str, version: str) -> dict[str, Any]:
+        project_id = project_id.strip()
+        version = version.strip()
+        if not project_id or not version:
+            raise ServiceError(ERROR_INVALID_PARAMS, "project_id and version are required")
+        score_path = self.storage.score_path(project_id, version)
+        if not score_path.exists():
+            raise ServiceError(ERROR_INVALID_PARAMS, f"score not found: {score_path}")
+        score = load_json(score_path)
+        return {
+            "project_id": project_id,
+            "version": version,
+            "score": score,
+            "score_path": to_relpath(score_path, self.root_dir),
+        }
+
     def _require_fields(self, payload: dict[str, Any], fields: list[str]) -> None:
         missing = [field for field in fields if field not in payload]
         if missing:

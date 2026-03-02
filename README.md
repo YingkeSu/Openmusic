@@ -37,6 +37,14 @@ python3 main.py --host 127.0.0.1 --port 8765
 
 打开浏览器访问：`http://127.0.0.1:8765/`
 
+Web 工作台能力（已完成）：
+
+1. 项目列表与版本切换（读取本地历史项目）。
+2. 一键全流程：`compose -> render_audio -> render_video -> export`。
+3. 谱面可视化（Canvas 五线谱 + 音符表）。
+4. 编辑与回滚操作（`score/edit`、`score/rollback`）。
+5. 产物可视化预览（WAV/MP4）与文件链接。
+
 ### 3) 配置 AI（DeepSeek MVP）
 
 在项目根目录创建 `.env`：
