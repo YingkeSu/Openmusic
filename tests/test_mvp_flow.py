@@ -142,6 +142,58 @@ def test_edit_and_rollback(tmp_path: Path) -> None:
     assert rollback_score["notes"][0]["pitch"] == pitch_v1
 
 
+def test_rhythm_chord_rest_edits(tmp_path: Path) -> None:
+    orchestrator = Orchestrator(root_dir=tmp_path)
+    compose_resp = handle_call(orchestrator.compose, make_intent("p_tc_e_rhythm", duration_sec=8))
+    assert compose_resp["code"] == 0
+    base_version = compose_resp["data"]["version"]
+    score = load_json(tmp_path / compose_resp["data"]["score_json"])
+    note_id = score["notes"][0]["note_id"]
+
+    set_dur = handle_call(
+        orchestrator.edit_score,
+        {
+            "project_id": "p_tc_e_rhythm",
+            "base_version": base_version,
+            "edits": [{"note_id": note_id, "type": "set_duration", "dur": "1/2"}],
+        },
+    )
+    assert set_dur["code"] == 0
+    v2 = set_dur["data"]["new_version"]
+    score_v2 = load_json(tmp_path / set_dur["data"]["score_json"])
+    target_v2 = next(n for n in score_v2["notes"] if n["note_id"] == note_id)
+    assert target_v2["dur"] == "1/2"
+
+    set_chord = handle_call(
+        orchestrator.edit_score,
+        {
+            "project_id": "p_tc_e_rhythm",
+            "base_version": v2,
+            "edits": [{"note_id": note_id, "type": "set_pitches", "pitches": ["D4", "F#4", "A4"]}],
+        },
+    )
+    assert set_chord["code"] == 0
+    v3 = set_chord["data"]["new_version"]
+    score_v3 = load_json(tmp_path / set_chord["data"]["score_json"])
+    target_v3 = next(n for n in score_v3["notes"] if n["note_id"] == note_id)
+    assert target_v3["pitches"] == ["D4", "F#4", "A4"]
+    assert target_v3["is_rest"] is False
+
+    set_rest = handle_call(
+        orchestrator.edit_score,
+        {
+            "project_id": "p_tc_e_rhythm",
+            "base_version": v3,
+            "edits": [{"note_id": note_id, "type": "toggle_rest", "is_rest": True}],
+        },
+    )
+    assert set_rest["code"] == 0
+    score_v4 = load_json(tmp_path / set_rest["data"]["score_json"])
+    target_v4 = next(n for n in score_v4["notes"] if n["note_id"] == note_id)
+    assert target_v4["is_rest"] is True
+    assert target_v4["pitches"] == []
+
+
 def test_render_audio_retry_and_failure(tmp_path: Path) -> None:
     orchestrator = Orchestrator(root_dir=tmp_path)
 

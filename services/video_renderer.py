@@ -30,6 +30,7 @@ class VideoRenderer:
     right_margin: int = 70
     staff_top: int = 180
     staff_line_gap: int = 14
+    staff_gap: int = 84
 
     def render(
         self,
@@ -90,17 +91,27 @@ class VideoRenderer:
 
         note_events = []
         for note in notes:
+            if note.is_rest:
+                continue
+            pitches = note.resolved_pitches()
+            if not pitches:
+                continue
             start_beats = (note.bar - 1) * beats_per_bar + (note.beat - 1.0)
             duration_beats = parse_duration_to_beats(note.dur)
             start_sec = start_beats * beat_sec
             end_sec = (start_beats + duration_beats) * beat_sec
-            midi = pitch_to_midi(note.pitch)
+            if note.staff == 2:
+                display_pitch = min(pitches, key=pitch_to_midi)
+            else:
+                display_pitch = max(pitches, key=pitch_to_midi)
             x = self.left_margin + int(
                 ((start_beats + duration_beats * 0.5) / (score.meta.bars * beats_per_bar))
                 * usable_width
             )
-            y, step_offset = self._pitch_to_staff_y(note.pitch)
-            note_events.append((x, y, step_offset, start_sec, end_sec, duration_beats, midi))
+            y, step_offset, staff_top = self._pitch_to_staff_y(display_pitch, note.staff)
+            note_events.append(
+                (x, y, step_offset, staff_top, start_sec, end_sec, duration_beats)
+            )
 
         with tempfile.TemporaryDirectory(prefix="piano_frames_") as tmp:
             tmp_dir = Path(tmp)
@@ -110,9 +121,17 @@ class VideoRenderer:
                 self._draw_staff(canvas, score.meta.bars, beats_per_bar, usable_width)
                 self._draw_playhead(canvas, current_t, total_seconds, usable_width)
 
-                for x, y, step_offset, _, end_sec, duration_beats, _ in note_events:
+                for x, y, step_offset, staff_top, _, end_sec, duration_beats in note_events:
                     color = played_rgb if current_t >= end_sec else unplayed_rgb
-                    self._draw_note(canvas, x, y, step_offset, duration_beats, color)
+                    self._draw_note(
+                        canvas,
+                        x,
+                        y,
+                        step_offset,
+                        duration_beats,
+                        color,
+                        staff_top,
+                    )
 
                 frame_path = tmp_dir / f"frame_{frame_idx:05d}.ppm"
                 self._write_ppm(frame_path, canvas)
@@ -152,16 +171,18 @@ class VideoRenderer:
         beats_per_bar: int,
         usable_width: int,
     ) -> None:
-        for idx in range(5):
-            y = self.staff_top + idx * self.staff_line_gap
-            self._draw_hline(
-                canvas,
-                y,
-                self.left_margin - 8,
-                self.width - self.right_margin + 8,
-                (168, 168, 168),
-                thickness=2,
-            )
+        staff_tops = [self.staff_top, self.staff_top + self.staff_gap]
+        for top in staff_tops:
+            for idx in range(5):
+                y = top + idx * self.staff_line_gap
+                self._draw_hline(
+                    canvas,
+                    y,
+                    self.left_margin - 8,
+                    self.width - self.right_margin + 8,
+                    (168, 168, 168),
+                    thickness=2,
+                )
 
         total_beats = bars * beats_per_bar
         for bar in range(0, bars + 1):
@@ -171,7 +192,7 @@ class VideoRenderer:
                 canvas,
                 x,
                 self.staff_top - 2,
-                self.staff_top + self.staff_line_gap * 4 + 2,
+                self.staff_top + self.staff_gap + self.staff_line_gap * 4 + 2,
                 (176, 176, 176),
                 thickness=thickness,
             )
@@ -191,7 +212,7 @@ class VideoRenderer:
             canvas,
             x,
             self.staff_top - 16,
-            self.staff_top + self.staff_line_gap * 4 + 48,
+            self.staff_top + self.staff_gap + self.staff_line_gap * 4 + 36,
             (64, 64, 64),
             thickness=2,
         )
@@ -204,6 +225,7 @@ class VideoRenderer:
         step_offset: int,
         duration_beats: float,
         color: tuple[int, int, int],
+        staff_top: int,
     ) -> None:
         rx = 8
         ry = 6
@@ -221,17 +243,23 @@ class VideoRenderer:
                 stem_x = x - rx + 1
                 self._draw_vline(canvas, stem_x, y, y + stem_len, color, thickness=2)
 
-        self._draw_ledger_lines(canvas, x, step_offset, color)
+        self._draw_ledger_lines(canvas, x, step_offset, color, staff_top)
 
-    def _pitch_to_staff_y(self, pitch: str) -> tuple[int, int]:
-        # Treble staff bottom line is E4 -> step offset 0.
+    def _pitch_to_staff_y(self, pitch: str, staff: int) -> tuple[int, int, int]:
+        # Treble bottom line: E4. Bass bottom line: G2.
+        if staff == 2:
+            bottom_line_pitch = "G2"
+            staff_top = self.staff_top + self.staff_gap
+        else:
+            bottom_line_pitch = "E4"
+            staff_top = self.staff_top
         note_step = self._diatonic_index(pitch)
-        bottom_line_step = self._diatonic_index("E4")
+        bottom_line_step = self._diatonic_index(bottom_line_pitch)
         step_offset = note_step - bottom_line_step
         half_gap = self.staff_line_gap / 2.0
-        y_bottom_line = self.staff_top + self.staff_line_gap * 4
+        y_bottom_line = staff_top + self.staff_line_gap * 4
         y = int(round(y_bottom_line - step_offset * half_gap))
-        return y, step_offset
+        return y, step_offset, staff_top
 
     def _diatonic_index(self, pitch: str) -> int:
         step, _, octave = parse_pitch(pitch)
@@ -244,24 +272,25 @@ class VideoRenderer:
         x: int,
         step_offset: int,
         color: tuple[int, int, int],
+        staff_top: int,
     ) -> None:
         # Staff covers step offsets [0..8], line positions are even offsets.
         if step_offset < 0:
             line_step = -2
             while line_step >= step_offset:
-                y = self._staff_y_from_step(line_step)
+                y = self._staff_y_from_step(line_step, staff_top)
                 self._draw_hline(canvas, y, x - 11, x + 11, color, thickness=2)
                 line_step -= 2
         elif step_offset > 8:
             line_step = 10
             while line_step <= step_offset:
-                y = self._staff_y_from_step(line_step)
+                y = self._staff_y_from_step(line_step, staff_top)
                 self._draw_hline(canvas, y, x - 11, x + 11, color, thickness=2)
                 line_step += 2
 
-    def _staff_y_from_step(self, step_offset: int) -> int:
+    def _staff_y_from_step(self, step_offset: int, staff_top: int) -> int:
         half_gap = self.staff_line_gap / 2.0
-        y_bottom_line = self.staff_top + self.staff_line_gap * 4
+        y_bottom_line = staff_top + self.staff_line_gap * 4
         return int(round(y_bottom_line - step_offset * half_gap))
 
     def _draw_hline(

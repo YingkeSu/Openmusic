@@ -457,9 +457,26 @@
             <div class="grid">
               <div><label>note_id</label><input id="editNoteId" placeholder="n_000001" /></div>
               <div><label>semitones</label><input id="editSemitones" type="number" value="2" /></div>
+              <div>
+                <label>dur（节奏）</label>
+                <select id="editDuration">
+                  <option value="1/8">1/8</option>
+                  <option value="1/4" selected>1/4</option>
+                  <option value="1/2">1/2</option>
+                  <option value="3/4">3/4</option>
+                  <option value="1/1">1/1</option>
+                </select>
+              </div>
+              <div><label>和弦 pitches（逗号分隔）</label><input id="editPitches" placeholder="D4,F#4,A4" /></div>
+              <div class="full">
+                <label><input id="editRest" type="checkbox" /> 设为休止符（is_rest）</label>
+              </div>
               <div><label>回滚版本</label><select id="rollbackVersion"></select></div>
-              <div class="actions" style="align-items:end;">
-                <button id="editBtn" class="secondary" disabled>提交编辑</button>
+              <div class="actions full" style="align-items:end;">
+                <button id="editBtn" class="secondary" disabled>升降音高</button>
+                <button id="setDurationBtn" class="secondary" disabled>更新节奏</button>
+                <button id="setPitchesBtn" class="secondary" disabled>更新和弦</button>
+                <button id="toggleRestBtn" class="secondary" disabled>切换休止</button>
                 <button id="rollbackBtn" class="warn" disabled>回滚</button>
               </div>
             </div>
@@ -477,7 +494,7 @@
                 <h3>音符表（点击可选 note_id）</h3>
                 <div class="table-wrap">
                   <table>
-                    <thead><tr><th>ID</th><th>Bar</th><th>Beat</th><th>Pitch</th><th>Dur</th></tr></thead>
+                    <thead><tr><th>ID</th><th>Bar</th><th>Beat</th><th>Staff</th><th>Voice</th><th>Pitches/Rest</th><th>Dur</th></tr></thead>
                     <tbody id="noteTableBody"></tbody>
                   </table>
                 </div>
@@ -548,10 +565,16 @@
         copyLlmBtn: document.getElementById('copyLlmBtn'),
         editNoteId: document.getElementById('editNoteId'),
         editSemitones: document.getElementById('editSemitones'),
+        editDuration: document.getElementById('editDuration'),
+        editPitches: document.getElementById('editPitches'),
+        editRest: document.getElementById('editRest'),
         renderAudioBtn: document.getElementById('renderAudioBtn'),
         renderVideoBtn: document.getElementById('renderVideoBtn'),
         exportBtn: document.getElementById('exportBtn'),
         editBtn: document.getElementById('editBtn'),
+        setDurationBtn: document.getElementById('setDurationBtn'),
+        setPitchesBtn: document.getElementById('setPitchesBtn'),
+        toggleRestBtn: document.getElementById('toggleRestBtn'),
         rollbackBtn: document.getElementById('rollbackBtn'),
       };
 
@@ -593,6 +616,9 @@
         el.renderVideoBtn.disabled = !hasProjectVersion;
         el.exportBtn.disabled = !hasProjectVersion;
         el.editBtn.disabled = !hasProjectVersion;
+        el.setDurationBtn.disabled = !hasProjectVersion;
+        el.setPitchesBtn.disabled = !hasProjectVersion;
+        el.toggleRestBtn.disabled = !hasProjectVersion;
         el.rollbackBtn.disabled = !hasProjectVersion;
         el.showLlmBtn.disabled = !hasProjectVersion;
       }
@@ -751,7 +777,8 @@
         const barsPerLine = 8;
         const lineCount = Math.max(1, Math.ceil(bars / barsPerLine));
         const width = Math.max(980, barsPerLine * 140);
-        const height = 40 + lineCount * 130;
+        const lineHeight = 210;
+        const height = 40 + lineCount * lineHeight;
 
         canvas.width = width * dpr;
         canvas.height = height * dpr;
@@ -773,15 +800,18 @@
         const notes = [...score.notes].sort((a, b) => a.bar - b.bar || a.beat - b.beat);
 
         for (let l = 0; l < lineCount; l++) {
-          const top = 42 + l * 130;
-          for (let i = 0; i < 5; i++) {
-            const y = top + i * lineGap;
-            ctx.strokeStyle = '#a29d93';
-            ctx.lineWidth = 1.5;
-            ctx.beginPath();
-            ctx.moveTo(left, y);
-            ctx.lineTo(right, y);
-            ctx.stroke();
+          const top = 42 + l * lineHeight;
+          const staffOffsets = [0, 62];
+          for (const sOff of staffOffsets) {
+            for (let i = 0; i < 5; i++) {
+              const y = top + sOff + i * lineGap;
+              ctx.strokeStyle = '#a29d93';
+              ctx.lineWidth = 1.5;
+              ctx.beginPath();
+              ctx.moveTo(left, y);
+              ctx.lineTo(right, y);
+              ctx.stroke();
+            }
           }
 
           const startBar = l * barsPerLine + 1;
@@ -793,21 +823,32 @@
             ctx.lineWidth = b === 0 || b === lineBars ? 2 : 1;
             ctx.beginPath();
             ctx.moveTo(x, top - 2);
-            ctx.lineTo(x, top + lineGap * 4 + 2);
+            ctx.lineTo(x, top + 62 + lineGap * 4 + 2);
             ctx.stroke();
           }
 
           const lineNotes = notes.filter((n) => n.bar >= startBar && n.bar <= endBar);
           for (const note of lineNotes) {
+            if (note.is_rest) {
+              continue;
+            }
             const localBar = note.bar - startBar;
             const beat = Number(note.beat || 1);
             const beatOffset = localBar * 4 + Math.max(0, Math.min(3.999, beat - 1));
             const x = left + (beatOffset / (lineBars * 4)) * usable;
-            const y = pitchToY(note.pitch, top, lineGap);
+            const pitchList = Array.isArray(note.pitches) && note.pitches.length > 0
+              ? note.pitches
+              : (note.pitch ? [note.pitch] : []);
+            if (pitchList.length === 0) {
+              continue;
+            }
+            const staffTop = (note.staff === 2) ? (top + 62) : top;
+            const y = pitchToY(pitchList[pitchList.length - 1], staffTop, lineGap);
             const active = note.note_id === state.selectedNoteId;
-            drawEllipse(ctx, x, y, 8, 5.6, active ? '#7a4f2b' : '#111111');
-            const stemUp = y >= top + lineGap * 2;
-            ctx.strokeStyle = active ? '#7a4f2b' : '#111111';
+            const color = active ? '#7a4f2b' : (note.staff === 2 ? '#2c3e50' : '#111111');
+            drawEllipse(ctx, x, y, 8, 5.6, color);
+            const stemUp = y >= staffTop + lineGap * 2;
+            ctx.strokeStyle = color;
             ctx.lineWidth = 1.6;
             ctx.beginPath();
             if (stemUp) {
@@ -830,15 +871,31 @@
           if (note.note_id === state.selectedNoteId) {
             tr.classList.add('active-note');
           }
-          tr.innerHTML = `<td>${note.note_id}</td><td>${note.bar}</td><td>${note.beat}</td><td>${note.pitch}</td><td>${note.dur}</td>`;
+          const pitches = Array.isArray(note.pitches) && note.pitches.length > 0
+            ? note.pitches.join(',')
+            : (note.pitch || '');
+          const pitchDisplay = note.is_rest ? 'REST' : pitches;
+          tr.innerHTML = `<td>${note.note_id}</td><td>${note.bar}</td><td>${note.beat}</td><td>${note.staff || 1}</td><td>${note.voice || 1}</td><td>${pitchDisplay}</td><td>${note.dur}</td>`;
           tr.addEventListener('click', () => {
             state.selectedNoteId = note.note_id;
-            el.editNoteId.value = note.note_id;
+            syncSelectedNoteFields();
             renderNoteTable(state.score);
             drawScore(state.score);
           });
           el.noteTableBody.appendChild(tr);
         }
+      }
+
+      function syncSelectedNoteFields() {
+        if (!state.score || !Array.isArray(state.score.notes)) return;
+        const note = state.score.notes.find((n) => n.note_id === state.selectedNoteId);
+        if (!note) return;
+        el.editNoteId.value = note.note_id;
+        el.editDuration.value = note.dur || '1/4';
+        el.editPitches.value = note.is_rest
+          ? ''
+          : (Array.isArray(note.pitches) && note.pitches.length > 0 ? note.pitches.join(',') : (note.pitch || ''));
+        el.editRest.checked = Boolean(note.is_rest);
       }
 
       async function refreshProjects(preferredProjectId = '') {
@@ -902,8 +959,8 @@
         state.score = data.score;
         if (!state.selectedNoteId && state.score.notes.length > 0) {
           state.selectedNoteId = state.score.notes[0].note_id;
-          el.editNoteId.value = state.selectedNoteId;
         }
+        syncSelectedNoteFields();
         drawScore(state.score);
         renderNoteTable(state.score);
         refreshArtifacts();
@@ -934,6 +991,9 @@
         state.llmOutputData = null;
 
         logTask(`Compose 成功: ${state.projectId}/${state.version} (engine=${data.compose_engine})`);
+        if (data.llm_output) {
+          logTask(`LLM 输出文件: ${data.llm_output}`);
+        }
         setStatus(`编曲成功：${data.compose_engine} | ${data.ai_provider || 'rule'}`, 'ok');
 
         await refreshProjects(state.projectId);
@@ -1007,6 +1067,67 @@
         setStep('export', '待执行', 'idle');
         logTask(`编辑成功，生成新版本: ${state.version}`);
         setStatus(`编辑成功，新版本 ${state.version}`, 'ok');
+        await refreshProjects(state.projectId);
+        await loadProject(state.projectId, state.version);
+      }
+
+      async function runSetDuration() {
+        ensureProjectVersion();
+        const noteId = el.editNoteId.value.trim();
+        const dur = el.editDuration.value;
+        if (!noteId) {
+          throw new Error('请先选择 note_id');
+        }
+        const data = await apiPost('/api/v1/score/edit', {
+          project_id: state.projectId,
+          base_version: state.version,
+          edits: [{note_id: noteId, type: 'set_duration', dur}],
+        });
+        state.version = data.new_version;
+        setStatus(`节奏更新成功，新版本 ${state.version}`, 'ok');
+        logTask(`set_duration: ${noteId} -> ${dur} (${state.version})`);
+        await refreshProjects(state.projectId);
+        await loadProject(state.projectId, state.version);
+      }
+
+      async function runSetPitches() {
+        ensureProjectVersion();
+        const noteId = el.editNoteId.value.trim();
+        const pitchList = el.editPitches.value.split(',').map((s) => s.trim()).filter(Boolean);
+        if (!noteId) {
+          throw new Error('请先选择 note_id');
+        }
+        if (pitchList.length === 0) {
+          throw new Error('请至少输入一个 pitch');
+        }
+        const data = await apiPost('/api/v1/score/edit', {
+          project_id: state.projectId,
+          base_version: state.version,
+          edits: [{note_id: noteId, type: 'set_pitches', pitches: pitchList}],
+        });
+        state.version = data.new_version;
+        setStatus(`和弦更新成功，新版本 ${state.version}`, 'ok');
+        logTask(`set_pitches: ${noteId} -> ${pitchList.join(',')} (${state.version})`);
+        await refreshProjects(state.projectId);
+        await loadProject(state.projectId, state.version);
+      }
+
+      async function runToggleRest() {
+        ensureProjectVersion();
+        const noteId = el.editNoteId.value.trim();
+        if (!noteId) {
+          throw new Error('请先选择 note_id');
+        }
+        const isRest = el.editRest.checked;
+        const pitch = el.editPitches.value.split(',').map((s) => s.trim()).filter(Boolean)[0] || 'D4';
+        const data = await apiPost('/api/v1/score/edit', {
+          project_id: state.projectId,
+          base_version: state.version,
+          edits: [{note_id: noteId, type: 'toggle_rest', is_rest: isRest, pitch}],
+        });
+        state.version = data.new_version;
+        setStatus(`休止状态更新成功，新版本 ${state.version}`, 'ok');
+        logTask(`toggle_rest: ${noteId} -> ${isRest ? 'REST' : 'NOTE'} (${state.version})`);
         await refreshProjects(state.projectId);
         await loadProject(state.projectId, state.version);
       }
@@ -1101,6 +1222,9 @@
       document.getElementById('renderVideoBtn').addEventListener('click', () => guarded(runRenderVideo));
       document.getElementById('exportBtn').addEventListener('click', () => guarded(runExport));
       document.getElementById('editBtn').addEventListener('click', () => guarded(runEdit));
+      document.getElementById('setDurationBtn').addEventListener('click', () => guarded(runSetDuration));
+      document.getElementById('setPitchesBtn').addEventListener('click', () => guarded(runSetPitches));
+      document.getElementById('toggleRestBtn').addEventListener('click', () => guarded(runToggleRest));
       document.getElementById('rollbackBtn').addEventListener('click', () => guarded(runRollback));
       document.getElementById('showLlmBtn').addEventListener('click', () => guarded(runShowLlmOutput));
 

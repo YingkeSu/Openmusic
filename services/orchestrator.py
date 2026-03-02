@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import math
 import traceback
 import uuid
 from dataclasses import dataclass, field
@@ -28,7 +29,16 @@ from .errors import ServiceError
 from .exporter import Exporter
 from .models import Score, TaskRecord
 from .storage import Storage
-from .utils import dump_json, load_json, log_line, to_relpath, transpose_pitch, utc_now_iso
+from .utils import (
+    dump_json,
+    load_json,
+    log_line,
+    parse_duration_to_beats,
+    time_signature_parts,
+    to_relpath,
+    transpose_pitch,
+    utc_now_iso,
+)
 from .video_renderer import VideoRenderer
 
 
@@ -331,13 +341,54 @@ class Orchestrator:
                 raise ServiceError(ERROR_INVALID_PARAMS, message)
             if edit_type == "pitch_shift":
                 semitones = int(edit.get("semitones", 0))
-                notes[note_id]["pitch"] = transpose_pitch(notes[note_id]["pitch"], semitones)
+                base_pitch = (
+                    str(notes[note_id].get("pitch", "")).strip()
+                    or (notes[note_id].get("pitches") or ["D4"])[0]
+                )
+                notes[note_id]["pitch"] = transpose_pitch(base_pitch, semitones)
+                notes[note_id]["pitches"] = [
+                    transpose_pitch(pitch, semitones)
+                    for pitch in notes[note_id].get("pitches", [])
+                ] or [notes[note_id]["pitch"]]
+                notes[note_id]["is_rest"] = False
+            elif edit_type == "set_duration":
+                dur = str(edit.get("dur", "")).strip()
+                if not dur:
+                    message = "dur is required for set_duration"
+                    self.tasks.failed(task.task_id, message, base_version)
+                    raise ServiceError(ERROR_INVALID_PARAMS, message)
+                notes[note_id]["dur"] = dur
+            elif edit_type == "toggle_rest":
+                as_rest = bool(edit.get("is_rest", True))
+                notes[note_id]["is_rest"] = as_rest
+                if as_rest:
+                    notes[note_id]["pitch"] = ""
+                    notes[note_id]["pitches"] = []
+                else:
+                    fallback = str(edit.get("pitch", "")).strip() or "D4"
+                    notes[note_id]["pitch"] = fallback
+                    notes[note_id]["pitches"] = [fallback]
+            elif edit_type == "set_pitches":
+                raw = edit.get("pitches")
+                if not isinstance(raw, list) or not raw:
+                    message = "pitches must be non-empty list for set_pitches"
+                    self.tasks.failed(task.task_id, message, base_version)
+                    raise ServiceError(ERROR_INVALID_PARAMS, message)
+                pitch_list = [str(p).strip() for p in raw if str(p).strip()]
+                if not pitch_list:
+                    message = "pitches must include valid values"
+                    self.tasks.failed(task.task_id, message, base_version)
+                    raise ServiceError(ERROR_INVALID_PARAMS, message)
+                notes[note_id]["pitches"] = pitch_list
+                notes[note_id]["pitch"] = pitch_list[0]
+                notes[note_id]["is_rest"] = False
             else:
                 message = f"unsupported edit type: {edit_type}"
                 self.tasks.failed(task.task_id, message, base_version)
                 raise ServiceError(ERROR_INVALID_PARAMS, message)
 
         try:
+            self._normalize_score_timeline(updated_score)
             score = Score.from_dict(updated_score)
             self.compiler.validate_score(score)
             new_version = self.storage.create_version(
@@ -552,6 +603,46 @@ class Orchestrator:
             raise ServiceError(ERROR_INVALID_PARAMS, f"path out of workspace: {raw_path}") from exc
 
         return resolved
+
+    def _normalize_score_timeline(self, score_dict: dict[str, Any]) -> None:
+        meta = score_dict.setdefault("meta", {})
+        time_signature = str(meta.get("time_signature", "4/4"))
+        beats_per_bar, _ = time_signature_parts(time_signature)
+        notes = score_dict.get("notes", [])
+        if not isinstance(notes, list) or not notes:
+            meta["bars"] = max(1, int(meta.get("bars", 1) or 1))
+            return
+
+        timeline_by_track: dict[tuple[int, int], list[tuple[float, str, dict[str, Any], float]]] = {}
+        for note in notes:
+            bar = int(note.get("bar", 1))
+            beat = float(note.get("beat", 1.0))
+            staff = int(note.get("staff", 1))
+            voice = int(note.get("voice", 1))
+            duration = parse_duration_to_beats(str(note.get("dur", "1/4")))
+            abs_start = (bar - 1) * beats_per_bar + (beat - 1.0)
+            timeline_by_track.setdefault((staff, voice), []).append(
+                (abs_start, str(note.get("note_id", "")), note, duration)
+            )
+
+        max_end = 0.0
+        for events in timeline_by_track.values():
+            events.sort(key=lambda item: (item[0], item[1]))
+            cursor = 0.0
+            for original_start, _, note, duration in events:
+                start = max(original_start, cursor)
+                in_bar = start % beats_per_bar
+                if in_bar + duration > beats_per_bar + 1e-6:
+                    start = math.ceil(start / beats_per_bar) * beats_per_bar
+                bar_index = int(start // beats_per_bar)
+                beat_in_bar = (start - bar_index * beats_per_bar) + 1.0
+                note["bar"] = bar_index + 1
+                note["beat"] = round(beat_in_bar, 3)
+                cursor = start + duration
+            max_end = max(max_end, cursor)
+
+        required_bars = max(1, int(math.ceil(max_end / beats_per_bar)))
+        meta["bars"] = max(int(meta.get("bars", 1) or 1), required_bars)
 
     def _log_task(self, task_id: str, text: str) -> None:
         log_line(self.root_dir / "logs" / "tasks" / f"{task_id}.log", text)

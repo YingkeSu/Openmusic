@@ -9,13 +9,26 @@ class ScoreNote:
     note_id: str
     bar: int
     beat: float
-    pitch: str
     dur: str
+    pitch: str = ""
+    pitches: list[str] = field(default_factory=list)
+    is_rest: bool = False
+    staff: int = 1
+    voice: int = 1
     vel: int = 72
     tie: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+    def resolved_pitches(self) -> list[str]:
+        if self.is_rest:
+            return []
+        if self.pitches:
+            return [p for p in self.pitches if p]
+        if self.pitch:
+            return [self.pitch]
+        return []
 
 
 @dataclass
