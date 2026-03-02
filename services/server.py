@@ -32,6 +32,7 @@ class PianoRequestHandler(BaseHTTPRequestHandler):
             "/api/v1/score/edit": self.orchestrator.edit_score,
             "/api/v1/score/rollback": self.orchestrator.rollback,
             "/api/v1/export": self.orchestrator.export,
+            "/api/v1/evaluate/similarity": self.orchestrator.evaluate_similarity,
         }
 
         handler = routes.get(parsed.path)

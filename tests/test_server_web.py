@@ -9,12 +9,27 @@ from http.server import ThreadingHTTPServer
 from pathlib import Path
 
 from services.orchestrator import Orchestrator
-from services.utils import dump_json
+from services.utils import dump_json, load_json
 from services.server import PianoRequestHandler, _create_server_with_fallback
 
 
 def _http_get(url: str) -> tuple[int, str, bytes]:
     req = urllib.request.Request(url=url, method="GET")
+    try:
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            return resp.status, resp.headers.get("Content-Type", ""), resp.read()
+    except urllib.error.HTTPError as exc:
+        return exc.code, exc.headers.get("Content-Type", ""), exc.read()
+
+
+def _http_post_json(url: str, payload: dict) -> tuple[int, str, bytes]:
+    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    req = urllib.request.Request(
+        url=url,
+        data=body,
+        method="POST",
+        headers={"Content-Type": "application/json"},
+    )
     try:
         with urllib.request.urlopen(req, timeout=5) as resp:
             return resp.status, resp.headers.get("Content-Type", ""), resp.read()
@@ -47,6 +62,10 @@ def test_web_root_and_web_path_available(tmp_path: Path) -> None:
     dump_json(
         tmp_path / "projects" / "web_test_project" / "v001" / "llm_output.json",
         {"project_id": "web_test_project", "version": "v001", "llm": {"raw_content": "{}"}},
+    )
+    dump_json(
+        tmp_path / "assets" / "reference_scores" / "senbonzakura.score.json",
+        load_json(tmp_path / "projects" / "web_test_project" / "v001" / "score.json"),
     )
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
@@ -110,6 +129,20 @@ def test_web_root_and_web_path_available(tmp_path: Path) -> None:
         payload_llm = json.loads(body_llm.decode("utf-8"))
         assert payload_llm["code"] == 0
         assert payload_llm["data"]["llm_output"]["project_id"] == "web_test_project"
+
+        status_eval, _, body_eval = _http_post_json(
+            f"http://{host}:{port}/api/v1/evaluate/similarity",
+            {
+                "project_id": "web_test_project",
+                "version": "v001",
+                "target_song": "senbonzakura",
+                "threshold": 95.0,
+            },
+        )
+        assert status_eval == 200
+        payload_eval = json.loads(body_eval.decode("utf-8"))
+        assert payload_eval["code"] == 0
+        assert payload_eval["data"]["pass"] is True
     finally:
         server.shutdown()
         server.server_close()
