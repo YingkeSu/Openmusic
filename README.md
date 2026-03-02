@@ -1,6 +1,6 @@
 # OpenMusic / Piano for AI
 
-AI 自动编曲项目（MVP）文档仓库。
+AI 自动编曲项目（MVP）仓库。
 
 ## 当前范围（已确认）
 
@@ -10,6 +10,31 @@ AI 自动编曲项目（MVP）文档仓库。
 4. 桌面本地优先。
 5. 必须导出 `MusicXML + MIDI + MP4`。
 6. 音频与视频必须本地渲染。
+
+## 项目状态
+
+已从“纯文档阶段”推进到“可运行 MVP 服务骨架”。
+
+- 实现说明：`docs/IMPLEMENTATION_STATUS_v1.0.md`
+- 服务代码：`openmusic_service/`
+- 启动入口：`main.py`
+
+## 快速启动
+
+```bash
+python3 main.py
+```
+
+服务默认地址：`http://127.0.0.1:18080`
+
+## 已实现 API（MVP 骨架）
+
+- `POST /api/v1/compose`
+- `POST /api/v1/render/audio`
+- `POST /api/v1/render/video`
+- `POST /api/v1/score/edit`
+- `POST /api/v1/export`
+- `GET /api/v1/tasks/{task_id}`
 
 ## 文档导航
 
@@ -21,15 +46,3 @@ AI 自动编曲项目（MVP）文档仓库。
 - 测试总策略：`docs/TEST_STRATEGY_v1.0.md`
 - 测试计划：`docs/TEST_PLAN_MVP_v1.0.md`
 - 测试用例：`docs/TEST_CASES_MVP_v1.0.md`
-
-## 目录建议（后续代码阶段）
-
-- `app/`：桌面客户端
-- `services/`：本地编排与渲染服务
-- `docs/`：产品、技术、测试、发布文档
-- `assets/`：SoundFont、测试素材、样例输入
-
-## 状态
-
-当前阶段：文档设计与方案冻结。
-
