@@ -4,7 +4,7 @@ from pathlib import Path
 
 from services.constants import ERROR_DURATION_EXCEEDED, ERROR_RENDER_AUDIO_FAILED
 from services.orchestrator import Orchestrator, handle_call
-from services.utils import load_json
+from services.utils import dump_json, load_json
 
 
 def make_intent(project_id: str, duration_sec: int = 8) -> dict:
@@ -192,6 +192,149 @@ def test_rhythm_chord_rest_edits(tmp_path: Path) -> None:
     target_v4 = next(n for n in score_v4["notes"] if n["note_id"] == note_id)
     assert target_v4["is_rest"] is True
     assert target_v4["pitches"] == []
+
+
+def test_reference_song_similarity_gate(tmp_path: Path) -> None:
+    orchestrator = Orchestrator(root_dir=tmp_path)
+
+    reference_path = tmp_path / "assets" / "reference_scores" / "senbonzakura.score.json"
+    dump_json(
+        reference_path,
+        {
+            "meta": {
+                "time_signature": "4/4",
+                "tempo_bpm": 154,
+                "key": "D",
+                "duration_sec": 8,
+                "style": "custom",
+                "title": "千本樱",
+                "mood": "dramatic",
+                "difficulty": "hard",
+                "reference": "senbonzakura",
+                "bars": 2,
+            },
+            "notes": [
+                {
+                    "note_id": "n_000001",
+                    "bar": 1,
+                    "beat": 1.0,
+                    "dur": "1/2",
+                    "pitch": "E5",
+                    "pitches": ["E5"],
+                    "is_rest": False,
+                    "staff": 1,
+                    "voice": 1,
+                    "vel": 86,
+                },
+                {
+                    "note_id": "n_000002",
+                    "bar": 1,
+                    "beat": 3.0,
+                    "dur": "1/4",
+                    "pitch": "D5",
+                    "pitches": ["D5"],
+                    "is_rest": False,
+                    "staff": 1,
+                    "voice": 1,
+                    "vel": 84,
+                },
+                {
+                    "note_id": "n_000003",
+                    "bar": 1,
+                    "beat": 4.0,
+                    "dur": "1/4",
+                    "pitch": "C5",
+                    "pitches": ["C5"],
+                    "is_rest": False,
+                    "staff": 1,
+                    "voice": 1,
+                    "vel": 82,
+                },
+                {
+                    "note_id": "n_000004",
+                    "bar": 2,
+                    "beat": 1.0,
+                    "dur": "1/2",
+                    "pitch": "E5",
+                    "pitches": ["E5"],
+                    "is_rest": False,
+                    "staff": 1,
+                    "voice": 1,
+                    "vel": 86,
+                },
+                {
+                    "note_id": "n_000005",
+                    "bar": 2,
+                    "beat": 3.0,
+                    "dur": "1/4",
+                    "pitch": "G5",
+                    "pitches": ["G5"],
+                    "is_rest": False,
+                    "staff": 1,
+                    "voice": 1,
+                    "vel": 84,
+                },
+                {
+                    "note_id": "n_000006",
+                    "bar": 2,
+                    "beat": 4.0,
+                    "dur": "1/4",
+                    "pitch": "A5",
+                    "pitches": ["A5"],
+                    "is_rest": False,
+                    "staff": 1,
+                    "voice": 1,
+                    "vel": 82,
+                },
+                {
+                    "note_id": "n_000007",
+                    "bar": 1,
+                    "beat": 1.0,
+                    "dur": "1/1",
+                    "pitch": "D3",
+                    "pitches": ["D3", "A3"],
+                    "is_rest": False,
+                    "staff": 2,
+                    "voice": 1,
+                    "vel": 68,
+                },
+                {
+                    "note_id": "n_000008",
+                    "bar": 2,
+                    "beat": 1.0,
+                    "dur": "1/1",
+                    "pitch": "C3",
+                    "pitches": ["C3", "G3"],
+                    "is_rest": False,
+                    "staff": 2,
+                    "voice": 1,
+                    "vel": 68,
+                },
+            ],
+        },
+    )
+
+    compose_payload = make_intent("p_tc_ref_song", duration_sec=8)
+    compose_payload["title"] = "千本樱"
+    compose_payload["target_song"] = "senbonzakura"
+    compose_resp = handle_call(orchestrator.compose, compose_payload)
+    assert compose_resp["code"] == 0
+    assert compose_resp["data"]["compose_engine"] == "reference"
+    assert compose_resp["data"]["reference_score"] == "assets/reference_scores/senbonzakura.score.json"
+
+    similarity_resp = handle_call(
+        orchestrator.evaluate_similarity,
+        {
+            "project_id": "p_tc_ref_song",
+            "version": compose_resp["data"]["version"],
+            "target_song": "senbonzakura",
+            "threshold": 95.0,
+        },
+    )
+    assert similarity_resp["code"] == 0
+    assert similarity_resp["data"]["pass"] is True
+    assert similarity_resp["data"]["similarity"] >= 95.0
+    assert (tmp_path / similarity_resp["data"]["report_path"]).exists()
 
 
 def test_render_audio_retry_and_failure(tmp_path: Path) -> None:

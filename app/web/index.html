@@ -423,6 +423,9 @@
               <div><label>调式</label><input id="key" value="D" /></div>
               <div><label>时长</label><input id="duration" type="number" min="4" max="60" value="16" /></div>
               <div><label>难度</label><select id="difficulty"><option value="easy">easy</option><option value="medium" selected>medium</option><option value="hard">hard</option></select></div>
+              <div><label>目标曲目（可空）</label><input id="targetSong" placeholder="senbonzakura / 千本樱" /></div>
+              <div><label>相似度阈值</label><input id="similarityThreshold" type="number" min="0" max="100" value="95" /></div>
+              <div class="full"><label>参考谱路径（可空）</label><input id="referenceScorePath" placeholder="assets/reference_scores/senbonzakura.score.json" /></div>
               <div class="full"><label>参考</label><textarea id="reference">古风、空灵、可演奏</textarea></div>
             </div>
             <h3>AI 设置</h3>
@@ -451,6 +454,7 @@
               <button id="renderVideoBtn" class="secondary" disabled>3) 视频</button>
               <button id="exportBtn" class="secondary" disabled>4) 导出</button>
               <button id="showLlmBtn" class="secondary" disabled>查看 LLM 输出</button>
+              <button id="evaluateSimilarityBtn" class="secondary" disabled>相似度评估</button>
               <button id="pipelineBtn">一键全流程</button>
             </div>
             <h3>编辑与回滚</h3>
@@ -571,6 +575,7 @@
         renderAudioBtn: document.getElementById('renderAudioBtn'),
         renderVideoBtn: document.getElementById('renderVideoBtn'),
         exportBtn: document.getElementById('exportBtn'),
+        evaluateSimilarityBtn: document.getElementById('evaluateSimilarityBtn'),
         editBtn: document.getElementById('editBtn'),
         setDurationBtn: document.getElementById('setDurationBtn'),
         setPitchesBtn: document.getElementById('setPitchesBtn'),
@@ -621,6 +626,7 @@
         el.toggleRestBtn.disabled = !hasProjectVersion;
         el.rollbackBtn.disabled = !hasProjectVersion;
         el.showLlmBtn.disabled = !hasProjectVersion;
+        el.evaluateSimilarityBtn.disabled = !hasProjectVersion;
       }
 
       function composePayloadFromForm() {
@@ -634,6 +640,8 @@
           key: value('key'),
           duration_sec: Number(value('duration')),
           difficulty: document.getElementById('difficulty').value,
+          target_song: value('targetSong'),
+          reference_score_path: value('referenceScorePath'),
           reference: value('reference'),
           compose_mode: document.getElementById('composeMode').value,
           ai_provider: value('aiProvider'),
@@ -1159,6 +1167,23 @@
         setStatus('LLM 输出已加载', 'ok');
       }
 
+      async function runEvaluateSimilarity() {
+        ensureProjectVersion();
+        const targetSong = (document.getElementById('targetSong').value || '').trim();
+        const referenceScorePath = (document.getElementById('referenceScorePath').value || '').trim();
+        const threshold = Number(document.getElementById('similarityThreshold').value || '95');
+        const data = await apiPost('/api/v1/evaluate/similarity', {
+          project_id: state.projectId,
+          version: state.version,
+          target_song: targetSong,
+          reference_score_path: referenceScorePath,
+          threshold,
+        });
+        const passText = data.pass ? '通过' : '未通过';
+        setStatus(`相似度 ${data.similarity}%（阈值 ${data.threshold}%）- ${passText}`, data.pass ? 'ok' : 'warn');
+        logTask(`相似度评估: ${data.similarity}% / ${data.threshold}% (${passText})`);
+      }
+
       async function guarded(action) {
         try {
           await action();
@@ -1227,6 +1252,7 @@
       document.getElementById('toggleRestBtn').addEventListener('click', () => guarded(runToggleRest));
       document.getElementById('rollbackBtn').addEventListener('click', () => guarded(runRollback));
       document.getElementById('showLlmBtn').addEventListener('click', () => guarded(runShowLlmOutput));
+      document.getElementById('evaluateSimilarityBtn').addEventListener('click', () => guarded(runEvaluateSimilarity));
 
       document.getElementById('pipelineBtn').addEventListener('click', () =>
         guarded(async () => {

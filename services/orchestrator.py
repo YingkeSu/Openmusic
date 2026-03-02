@@ -28,6 +28,7 @@ from .constants import (
 from .errors import ServiceError
 from .exporter import Exporter
 from .models import Score, TaskRecord
+from .similarity import ScoreSimilarityEvaluator
 from .storage import Storage
 from .utils import (
     dump_json,
@@ -120,6 +121,7 @@ class Orchestrator:
             registry_path = Path(__file__).resolve().parent / "config" / "llm_providers.json"
         self.ai_registry = LLMConfigRegistry.load(registry_path)
         self.ai_composer = AIComposer()
+        self.similarity_evaluator = ScoreSimilarityEvaluator()
 
     def compose(self, payload: dict[str, Any]) -> dict[str, Any]:
         self._require_fields(
@@ -155,6 +157,12 @@ class Orchestrator:
                 ERROR_INVALID_PARAMS,
                 "compose_mode must be one of: auto | ai | rule",
             )
+        reference_score_path = self._resolve_reference_score_path(payload)
+        if reference_score_path is None and self._is_senbonzakura_target(payload):
+            raise ServiceError(
+                ERROR_INVALID_PARAMS,
+                "target_song=senbonzakura requires reference_score_path or assets/reference_scores/senbonzakura.score.json",
+            )
 
         task = self.tasks.create(project_id, "", "compose")
         self.tasks.running(task.task_id)
@@ -162,31 +170,41 @@ class Orchestrator:
         score: Score | None = None
         compose_error = ""
         compose_engine = "rule"
+        reference_score_relpath = ""
         llm_debug: dict[str, Any] = {}
         llm_output_relpath = ""
         ai_runtime = resolve_llm_runtime(self.root_dir, payload, self.ai_registry)
-        ai_requested = compose_mode == "ai" or (compose_mode == "auto" and ai_runtime.enabled)
+        ai_requested = (
+            reference_score_path is None
+            and (compose_mode == "ai" or (compose_mode == "auto" and ai_runtime.enabled))
+        )
 
-        for attempt in range(1, MAX_LLM_RETRY + 1):
-            try:
-                if ai_requested:
-                    compose_with_debug = getattr(self.ai_composer, "compose_with_debug", None)
-                    if callable(compose_with_debug):
-                        score, llm_debug = compose_with_debug(intent, ai_runtime)
+        if reference_score_path is not None:
+            score = self._load_reference_score(reference_score_path, intent)
+            compose_engine = "reference"
+            reference_score_relpath = to_relpath(reference_score_path, self.root_dir)
+            self._log_task(task.task_id, f"use reference score: {reference_score_path}")
+        else:
+            for attempt in range(1, MAX_LLM_RETRY + 1):
+                try:
+                    if ai_requested:
+                        compose_with_debug = getattr(self.ai_composer, "compose_with_debug", None)
+                        if callable(compose_with_debug):
+                            score, llm_debug = compose_with_debug(intent, ai_runtime)
+                        else:
+                            score = self.ai_composer.compose(intent, ai_runtime)
+                            llm_debug = {}
+                        compose_engine = "ai"
                     else:
-                        score = self.ai_composer.compose(intent, ai_runtime)
-                        llm_debug = {}
-                    compose_engine = "ai"
-                else:
-                    score = self.composer.compose(intent)
-                    compose_engine = "rule"
-                break
-            except Exception as exc:
-                compose_error = f"compose attempt {attempt} failed: {exc}"
-                self._log_task(task.task_id, compose_error)
-                if ai_requested and compose_mode == "auto":
-                    self._log_task(task.task_id, "fallback to rule composer in auto mode")
-                    ai_requested = False
+                        score = self.composer.compose(intent)
+                        compose_engine = "rule"
+                    break
+                except Exception as exc:
+                    compose_error = f"compose attempt {attempt} failed: {exc}"
+                    self._log_task(task.task_id, compose_error)
+                    if ai_requested and compose_mode == "auto":
+                        self._log_task(task.task_id, "fallback to rule composer in auto mode")
+                        ai_requested = False
 
         if score is None:
             self.tasks.failed(task.task_id, compose_error)
@@ -225,6 +243,7 @@ class Orchestrator:
             "compose_engine": compose_engine,
             "ai_provider": ai_runtime.provider_id if compose_engine == "ai" else "",
             "ai_model": ai_runtime.model if compose_engine == "ai" else "",
+            "reference_score": reference_score_relpath,
             "llm_output": llm_output_relpath,
             "score_json": to_relpath(self.storage.score_path(project_id, version), self.root_dir),
             "musicxml": to_relpath(musicxml_path, self.root_dir),
@@ -501,6 +520,45 @@ class Orchestrator:
             "manifest_path": to_relpath(out_manifest, self.root_dir),
         }
 
+    def evaluate_similarity(self, payload: dict[str, Any]) -> dict[str, Any]:
+        self._require_fields(payload, ["project_id", "version"])
+        project_id = str(payload["project_id"]).strip()
+        version = str(payload["version"]).strip()
+        threshold = float(payload.get("threshold", 95.0))
+        if threshold < 0.0 or threshold > 100.0:
+            raise ServiceError(ERROR_INVALID_PARAMS, "threshold must be in [0, 100]")
+
+        reference_path = self._resolve_reference_score_path(payload)
+        if reference_path is None:
+            raise ServiceError(
+                ERROR_INVALID_PARAMS,
+                "reference_score_path is required (or set target_song to senbonzakura with local reference file)",
+            )
+
+        generated = self._load_score(project_id, version)
+        reference = self._load_reference_score(reference_path, {})
+        result = self.similarity_evaluator.evaluate(generated, reference, threshold=threshold)
+
+        report_path = self.storage.similarity_report_path(project_id, version)
+        dump_json(
+            report_path,
+            {
+                "project_id": project_id,
+                "version": version,
+                "reference_score_path": str(reference_path),
+                "evaluated_at": utc_now_iso(),
+                "result": result,
+            },
+        )
+
+        return {
+            "project_id": project_id,
+            "version": version,
+            "reference_score_path": to_relpath(reference_path, self.root_dir),
+            "report_path": to_relpath(report_path, self.root_dir),
+            **result,
+        }
+
     def get_task(self, task_id: str) -> dict[str, Any]:
         record = self.tasks.get(task_id)
         if record is None:
@@ -590,6 +648,40 @@ class Orchestrator:
             raise ServiceError(ERROR_INVALID_PARAMS, f"score not found: {score_path}")
         score_dict = load_json(score_path)
         return Score.from_dict(score_dict)
+
+    def _load_reference_score(self, path: Path, intent: dict[str, Any]) -> Score:
+        if not path.exists():
+            raise ServiceError(ERROR_INVALID_PARAMS, f"reference score not found: {path}")
+        payload = load_json(path)
+        score = Score.from_dict(payload)
+        if intent:
+            score.meta.title = str(intent.get("title", score.meta.title))
+            score.meta.style = str(intent.get("style", score.meta.style))
+            score.meta.mood = str(intent.get("mood", score.meta.mood))
+            score.meta.difficulty = str(intent.get("difficulty", score.meta.difficulty))
+            score.meta.reference = str(intent.get("reference", score.meta.reference))
+            score.meta.key = str(intent.get("key", score.meta.key))
+            score.meta.tempo_bpm = int(intent.get("tempo_bpm", score.meta.tempo_bpm))
+            score.meta.duration_sec = int(intent.get("duration_sec", score.meta.duration_sec))
+        return score
+
+    def _resolve_reference_score_path(self, payload: dict[str, Any]) -> Path | None:
+        explicit = str(payload.get("reference_score_path", "")).strip()
+        if explicit:
+            return self._resolve_local_path(explicit)
+
+        if self._is_senbonzakura_target(payload):
+            candidate = (self.root_dir / "assets" / "reference_scores" / "senbonzakura.score.json").resolve()
+            if candidate.exists():
+                return candidate
+        return None
+
+    def _is_senbonzakura_target(self, payload: dict[str, Any]) -> bool:
+        target_song = str(payload.get("target_song", "")).strip().lower()
+        if not target_song:
+            target_song = str(payload.get("title", "")).strip().lower()
+        normalized = target_song.replace("-", "").replace("_", "").replace(" ", "")
+        return ("千本樱" in target_song) or ("senbonzakura" in normalized)
 
     def _resolve_local_path(self, raw_path: str) -> Path:
         path = Path(raw_path)

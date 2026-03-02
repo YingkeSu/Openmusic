@@ -78,6 +78,23 @@ python3 -m app.desktop_cli compose \
   --ai-provider deepseek
 ```
 
+可选：指定“目标歌曲 + 参考谱”做高相似生成（验收场景）：
+
+```bash
+python3 -m app.desktop_cli compose \
+  --project-id senbonzakura_demo \
+  --title 千本樱 \
+  --style custom \
+  --mood dramatic \
+  --tempo-bpm 154 \
+  --key D \
+  --duration-sec 30 \
+  --difficulty hard \
+  --reference "千本樱，钢琴版" \
+  --target-song senbonzakura \
+  --reference-score-path assets/reference_scores/senbonzakura.score.json
+```
+
 `--compose-mode` 支持：
 
 - `auto`：若 AI 配置可用则用 AI，否则回退规则编曲（默认）。
@@ -105,6 +122,17 @@ python3 -m app.desktop_cli export \
   --project-id demo_001 \
   --version v001 \
   --targets musicxml midi mp4
+```
+
+相似度评估（默认验收阈值 95）：
+
+```bash
+python3 -m app.desktop_cli evaluate-similarity \
+  --project-id senbonzakura_demo \
+  --version v001 \
+  --target-song senbonzakura \
+  --reference-score-path assets/reference_scores/senbonzakura.score.json \
+  --threshold 95
 ```
 
 ### 5) 运行测试

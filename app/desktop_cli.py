@@ -33,6 +33,8 @@ def main() -> None:
         choices=["auto", "ai", "rule"],
         help="auto: AI if configured, else rule; ai: force AI; rule: deterministic composer",
     )
+    compose.add_argument("--target-song", default="")
+    compose.add_argument("--reference-score-path", default="")
     compose.add_argument("--ai-provider", default="")
     compose.add_argument("--ai-model", default="")
     compose.add_argument("--ai-base-url", default="")
@@ -70,6 +72,13 @@ def main() -> None:
         choices=["musicxml", "midi", "mp4"],
     )
 
+    evaluate_similarity = subparsers.add_parser("evaluate-similarity")
+    evaluate_similarity.add_argument("--project-id", required=True)
+    evaluate_similarity.add_argument("--version", required=True)
+    evaluate_similarity.add_argument("--target-song", default="")
+    evaluate_similarity.add_argument("--reference-score-path", default="")
+    evaluate_similarity.add_argument("--threshold", type=float, default=95.0)
+
     args = parser.parse_args()
     orchestrator = Orchestrator(root_dir=Path(args.root_dir).resolve())
 
@@ -85,6 +94,8 @@ def main() -> None:
             "difficulty": args.difficulty,
             "reference": args.reference,
             "compose_mode": args.compose_mode,
+            "target_song": args.target_song,
+            "reference_score_path": args.reference_score_path,
             "ai_provider": args.ai_provider,
             "ai_model": args.ai_model,
             "ai_base_url": args.ai_base_url,
@@ -141,6 +152,17 @@ def main() -> None:
             "targets": args.targets,
         }
         print_response(handle_call(orchestrator.export, payload))
+        return
+
+    if args.command == "evaluate-similarity":
+        payload = {
+            "project_id": args.project_id,
+            "version": args.version,
+            "target_song": args.target_song,
+            "reference_score_path": args.reference_score_path,
+            "threshold": args.threshold,
+        }
+        print_response(handle_call(orchestrator.evaluate_similarity, payload))
         return
 
 
