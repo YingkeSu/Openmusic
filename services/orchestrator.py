@@ -27,6 +27,7 @@ from .constants import (
 )
 from .errors import ServiceError
 from .exporter import Exporter
+from .midi_importer import MidiImporter
 from .models import Score, TaskRecord
 from .similarity import ScoreSimilarityEvaluator
 from .storage import Storage
@@ -121,6 +122,7 @@ class Orchestrator:
             registry_path = Path(__file__).resolve().parent / "config" / "llm_providers.json"
         self.ai_registry = LLMConfigRegistry.load(registry_path)
         self.ai_composer = AIComposer()
+        self.midi_importer = MidiImporter()
         self.similarity_evaluator = ScoreSimilarityEvaluator()
 
     def compose(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -158,10 +160,14 @@ class Orchestrator:
                 "compose_mode must be one of: auto | ai | rule",
             )
         reference_score_path = self._resolve_reference_score_path(payload)
-        if reference_score_path is None and self._is_senbonzakura_target(payload):
+        reference_midi_path = self._resolve_reference_midi_path(payload)
+        if reference_score_path is None and reference_midi_path is None and self._is_senbonzakura_target(payload):
             raise ServiceError(
                 ERROR_INVALID_PARAMS,
-                "target_song=senbonzakura requires reference_score_path or assets/reference_scores/senbonzakura.score.json",
+                (
+                    "target_song=senbonzakura requires reference_score_path/reference_midi_path "
+                    "or assets/reference_scores/senbonzakura.score.json|senbonzakura.mid"
+                ),
             )
 
         task = self.tasks.create(project_id, "", "compose")
@@ -176,6 +182,7 @@ class Orchestrator:
         ai_runtime = resolve_llm_runtime(self.root_dir, payload, self.ai_registry)
         ai_requested = (
             reference_score_path is None
+            and reference_midi_path is None
             and (compose_mode == "ai" or (compose_mode == "auto" and ai_runtime.enabled))
         )
 
@@ -184,6 +191,11 @@ class Orchestrator:
             compose_engine = "reference"
             reference_score_relpath = to_relpath(reference_score_path, self.root_dir)
             self._log_task(task.task_id, f"use reference score: {reference_score_path}")
+        elif reference_midi_path is not None:
+            score = self._load_reference_midi(reference_midi_path, intent)
+            compose_engine = "reference_midi"
+            reference_score_relpath = to_relpath(reference_midi_path, self.root_dir)
+            self._log_task(task.task_id, f"use reference midi: {reference_midi_path}")
         else:
             for attempt in range(1, MAX_LLM_RETRY + 1):
                 try:
@@ -244,6 +256,7 @@ class Orchestrator:
             "ai_provider": ai_runtime.provider_id if compose_engine == "ai" else "",
             "ai_model": ai_runtime.model if compose_engine == "ai" else "",
             "reference_score": reference_score_relpath,
+            "reference_source": reference_score_relpath,
             "llm_output": llm_output_relpath,
             "score_json": to_relpath(self.storage.score_path(project_id, version), self.root_dir),
             "musicxml": to_relpath(musicxml_path, self.root_dir),
@@ -528,15 +541,26 @@ class Orchestrator:
         if threshold < 0.0 or threshold > 100.0:
             raise ServiceError(ERROR_INVALID_PARAMS, "threshold must be in [0, 100]")
 
-        reference_path = self._resolve_reference_score_path(payload)
-        if reference_path is None:
+        reference_score_path = self._resolve_reference_score_path(payload)
+        reference_midi_path = self._resolve_reference_midi_path(payload)
+        if reference_score_path is None and reference_midi_path is None:
             raise ServiceError(
                 ERROR_INVALID_PARAMS,
-                "reference_score_path is required (or set target_song to senbonzakura with local reference file)",
+                (
+                    "reference_score_path or reference_midi_path is required "
+                    "(or set target_song to senbonzakura with local reference file)"
+                ),
             )
 
         generated = self._load_score(project_id, version)
-        reference = self._load_reference_score(reference_path, {})
+        source_type = "score_json"
+        if reference_score_path is not None:
+            reference = self._load_reference_score(reference_score_path, {})
+            reference_source_path = reference_score_path
+        else:
+            reference = self._load_reference_midi(reference_midi_path, {})
+            reference_source_path = reference_midi_path
+            source_type = "midi"
         result = self.similarity_evaluator.evaluate(generated, reference, threshold=threshold)
 
         report_path = self.storage.similarity_report_path(project_id, version)
@@ -545,7 +569,8 @@ class Orchestrator:
             {
                 "project_id": project_id,
                 "version": version,
-                "reference_score_path": str(reference_path),
+                "reference_source_path": str(reference_source_path),
+                "reference_source_type": source_type,
                 "evaluated_at": utc_now_iso(),
                 "result": result,
             },
@@ -554,7 +579,8 @@ class Orchestrator:
         return {
             "project_id": project_id,
             "version": version,
-            "reference_score_path": to_relpath(reference_path, self.root_dir),
+            "reference_score_path": to_relpath(reference_source_path, self.root_dir),
+            "reference_source_type": source_type,
             "report_path": to_relpath(report_path, self.root_dir),
             **result,
         }
@@ -665,6 +691,11 @@ class Orchestrator:
             score.meta.duration_sec = int(intent.get("duration_sec", score.meta.duration_sec))
         return score
 
+    def _load_reference_midi(self, path: Path, intent: dict[str, Any]) -> Score:
+        if not path.exists():
+            raise ServiceError(ERROR_INVALID_PARAMS, f"reference midi not found: {path}")
+        return self.midi_importer.import_file(path, intent)
+
     def _resolve_reference_score_path(self, payload: dict[str, Any]) -> Path | None:
         explicit = str(payload.get("reference_score_path", "")).strip()
         if explicit:
@@ -674,6 +705,18 @@ class Orchestrator:
             candidate = (self.root_dir / "assets" / "reference_scores" / "senbonzakura.score.json").resolve()
             if candidate.exists():
                 return candidate
+        return None
+
+    def _resolve_reference_midi_path(self, payload: dict[str, Any]) -> Path | None:
+        explicit = str(payload.get("reference_midi_path", "")).strip()
+        if explicit:
+            return self._resolve_local_path(explicit)
+
+        if self._is_senbonzakura_target(payload):
+            for filename in ("senbonzakura.mid", "senbonzakura.midi"):
+                candidate = (self.root_dir / "assets" / "reference_scores" / filename).resolve()
+                if candidate.exists():
+                    return candidate
         return None
 
     def _is_senbonzakura_target(self, payload: dict[str, Any]) -> bool:

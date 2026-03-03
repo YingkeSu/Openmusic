@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import mido
+
 from services.constants import ERROR_DURATION_EXCEEDED, ERROR_RENDER_AUDIO_FAILED
 from services.orchestrator import Orchestrator, handle_call
 from services.utils import dump_json, load_json
@@ -335,6 +337,57 @@ def test_reference_song_similarity_gate(tmp_path: Path) -> None:
     assert similarity_resp["data"]["pass"] is True
     assert similarity_resp["data"]["similarity"] >= 95.0
     assert (tmp_path / similarity_resp["data"]["report_path"]).exists()
+
+
+def test_reference_midi_similarity_gate(tmp_path: Path) -> None:
+    orchestrator = Orchestrator(root_dir=tmp_path)
+    midi_path = tmp_path / "assets" / "reference_scores" / "senbonzakura.mid"
+    midi_path.parent.mkdir(parents=True, exist_ok=True)
+
+    midi = mido.MidiFile(ticks_per_beat=480)
+    track = mido.MidiTrack()
+    midi.tracks.append(track)
+    track.append(mido.MetaMessage("set_tempo", tempo=mido.bpm2tempo(150), time=0))
+    track.append(mido.MetaMessage("time_signature", numerator=4, denominator=4, time=0))
+
+    # Bar 1 right hand: C5 q, D5 q, E5 h
+    track.append(mido.Message("note_on", note=72, velocity=88, time=0, channel=0))
+    track.append(mido.Message("note_off", note=72, velocity=0, time=480, channel=0))
+    track.append(mido.Message("note_on", note=74, velocity=88, time=0, channel=0))
+    track.append(mido.Message("note_off", note=74, velocity=0, time=480, channel=0))
+    track.append(mido.Message("note_on", note=76, velocity=88, time=0, channel=0))
+    track.append(mido.Message("note_off", note=76, velocity=0, time=960, channel=0))
+
+    # Bar 2 right hand: G5 q, A5 q, B5 h
+    track.append(mido.Message("note_on", note=79, velocity=86, time=0, channel=0))
+    track.append(mido.Message("note_off", note=79, velocity=0, time=480, channel=0))
+    track.append(mido.Message("note_on", note=81, velocity=86, time=0, channel=0))
+    track.append(mido.Message("note_off", note=81, velocity=0, time=480, channel=0))
+    track.append(mido.Message("note_on", note=83, velocity=86, time=0, channel=0))
+    track.append(mido.Message("note_off", note=83, velocity=0, time=960, channel=0))
+    track.append(mido.MetaMessage("end_of_track", time=0))
+    midi.save(str(midi_path))
+
+    compose_payload = make_intent("p_tc_ref_midi", duration_sec=8)
+    compose_payload["title"] = "千本樱"
+    compose_payload["target_song"] = "senbonzakura"
+    compose_payload["reference_midi_path"] = "assets/reference_scores/senbonzakura.mid"
+    compose_resp = handle_call(orchestrator.compose, compose_payload)
+    assert compose_resp["code"] == 0
+    assert compose_resp["data"]["compose_engine"] == "reference_midi"
+
+    similarity_resp = handle_call(
+        orchestrator.evaluate_similarity,
+        {
+            "project_id": "p_tc_ref_midi",
+            "version": compose_resp["data"]["version"],
+            "reference_midi_path": "assets/reference_scores/senbonzakura.mid",
+            "threshold": 95.0,
+        },
+    )
+    assert similarity_resp["code"] == 0
+    assert similarity_resp["data"]["pass"] is True
+    assert similarity_resp["data"]["similarity"] >= 95.0
 
 
 def test_render_audio_retry_and_failure(tmp_path: Path) -> None:

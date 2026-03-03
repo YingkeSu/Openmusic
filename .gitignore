@@ -14,3 +14,7 @@ projects/*
 
 # Local secrets
 .env
+
+# Local licensed reference files (do not commit)
+assets/reference_scores/*
+!assets/reference_scores/README.md

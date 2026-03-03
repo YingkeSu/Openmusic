@@ -426,6 +426,7 @@
               <div><label>目标曲目（可空）</label><input id="targetSong" placeholder="senbonzakura / 千本樱" /></div>
               <div><label>相似度阈值</label><input id="similarityThreshold" type="number" min="0" max="100" value="95" /></div>
               <div class="full"><label>参考谱路径（可空）</label><input id="referenceScorePath" placeholder="assets/reference_scores/senbonzakura.score.json" /></div>
+              <div class="full"><label>参考 MIDI 路径（可空）</label><input id="referenceMidiPath" placeholder="assets/reference_scores/senbonzakura.mid" /></div>
               <div class="full"><label>参考</label><textarea id="reference">古风、空灵、可演奏</textarea></div>
             </div>
             <h3>AI 设置</h3>
@@ -642,6 +643,7 @@
           difficulty: document.getElementById('difficulty').value,
           target_song: value('targetSong'),
           reference_score_path: value('referenceScorePath'),
+          reference_midi_path: value('referenceMidiPath'),
           reference: value('reference'),
           compose_mode: document.getElementById('composeMode').value,
           ai_provider: value('aiProvider'),
@@ -1171,12 +1173,14 @@
         ensureProjectVersion();
         const targetSong = (document.getElementById('targetSong').value || '').trim();
         const referenceScorePath = (document.getElementById('referenceScorePath').value || '').trim();
+        const referenceMidiPath = (document.getElementById('referenceMidiPath').value || '').trim();
         const threshold = Number(document.getElementById('similarityThreshold').value || '95');
         const data = await apiPost('/api/v1/evaluate/similarity', {
           project_id: state.projectId,
           version: state.version,
           target_song: targetSong,
           reference_score_path: referenceScorePath,
+          reference_midi_path: referenceMidiPath,
           threshold,
         });
         const passText = data.pass ? '通过' : '未通过';

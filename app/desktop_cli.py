@@ -35,6 +35,7 @@ def main() -> None:
     )
     compose.add_argument("--target-song", default="")
     compose.add_argument("--reference-score-path", default="")
+    compose.add_argument("--reference-midi-path", default="")
     compose.add_argument("--ai-provider", default="")
     compose.add_argument("--ai-model", default="")
     compose.add_argument("--ai-base-url", default="")
@@ -77,6 +78,7 @@ def main() -> None:
     evaluate_similarity.add_argument("--version", required=True)
     evaluate_similarity.add_argument("--target-song", default="")
     evaluate_similarity.add_argument("--reference-score-path", default="")
+    evaluate_similarity.add_argument("--reference-midi-path", default="")
     evaluate_similarity.add_argument("--threshold", type=float, default=95.0)
 
     args = parser.parse_args()
@@ -96,6 +98,7 @@ def main() -> None:
             "compose_mode": args.compose_mode,
             "target_song": args.target_song,
             "reference_score_path": args.reference_score_path,
+            "reference_midi_path": args.reference_midi_path,
             "ai_provider": args.ai_provider,
             "ai_model": args.ai_model,
             "ai_base_url": args.ai_base_url,
@@ -160,6 +163,7 @@ def main() -> None:
             "version": args.version,
             "target_song": args.target_song,
             "reference_score_path": args.reference_score_path,
+            "reference_midi_path": args.reference_midi_path,
             "threshold": args.threshold,
         }
         print_response(handle_call(orchestrator.evaluate_similarity, payload))
