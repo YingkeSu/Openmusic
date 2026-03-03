@@ -95,6 +95,23 @@ python3 -m app.desktop_cli compose \
   --reference-score-path assets/reference_scores/senbonzakura.score.json
 ```
 
+也可直接用 MIDI 作为参考输入（无需本地 OMR）：
+
+```bash
+python3 -m app.desktop_cli compose \
+  --project-id senbonzakura_demo \
+  --title 千本樱 \
+  --style custom \
+  --mood dramatic \
+  --tempo-bpm 154 \
+  --key D \
+  --duration-sec 30 \
+  --difficulty hard \
+  --reference "千本樱，钢琴版" \
+  --target-song senbonzakura \
+  --reference-midi-path assets/reference_scores/senbonzakura.mid
+```
+
 `--compose-mode` 支持：
 
 - `auto`：若 AI 配置可用则用 AI，否则回退规则编曲（默认）。
@@ -132,6 +149,7 @@ python3 -m app.desktop_cli evaluate-similarity \
   --version v001 \
   --target-song senbonzakura \
   --reference-score-path assets/reference_scores/senbonzakura.score.json \
+  --reference-midi-path assets/reference_scores/senbonzakura.mid \
   --threshold 95
 ```
 
